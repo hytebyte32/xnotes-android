@@ -1630,12 +1630,15 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         val oy = document.originY
         val w = document.limitW
         val h = document.limitH
+        // Like opening a note: a limited width fills the screen width (else a limited height fills
+        // the screen height), starting at the top-left, so it opens readable rather than shrunk.
         when {
-            w != null && h != null -> viewport.fit(com.xnotes.core.geometry.Rect(ox, oy, w, h))
-            w != null -> viewport.fit(com.xnotes.core.geometry.Rect(ox, oy, w, w * vh / vw))
-            h != null -> viewport.fit(com.xnotes.core.geometry.Rect(ox, oy, h * vw / vh, h))
-            else -> viewport.centerOn(ox + vw / viewport.zoom / 2.0, oy + vh / viewport.zoom / 2.0)
+            w != null -> viewport.zoom = vw / w
+            h != null -> viewport.zoom = vh / h
         }
+        viewport.scrollX = ox
+        viewport.scrollY = oy
+        viewport.clampToLimits()
     }
 
     /** Set the extent of each axis in content px; null = infinite. Saved with the canvas. */
