@@ -46,6 +46,10 @@ object ScreenCalibration {
     /** Screen pixels per centimetre from a density in pixels per inch. */
     fun pxPerCmFromDpi(dpi: Double): Double = dpi / CM_PER_INCH
 
+    /** The hand calibration when there is one (> 0), otherwise the density the device reports. */
+    fun resolve(calibratedPxPerCm: Double, deviceXdpi: Double): Double =
+        if (calibratedPxPerCm > 0.0) calibratedPxPerCm else pxPerCmFromDpi(deviceXdpi)
+
     /** Screen pixels per centimetre from a reference of [realCm] matched by [onScreenPx] pixels. */
     fun fromReference(onScreenPx: Double, realCm: Double): Double? {
         if (onScreenPx <= 0.0 || realCm <= 0.0) return null

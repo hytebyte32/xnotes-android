@@ -1422,6 +1422,23 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         onContentChanged?.invoke()
     }
 
+    /** Screen pixels per real centimetre, for the 1:1 view. */
+    private var screenPxPerCm = com.xnotes.core.measure.ScreenCalibration.pxPerCmFromDpi(160.0)
+
+    fun applyMeasurePrefs(inches: Boolean, pxPerCm: Double) {
+        useInches = inches
+        if (pxPerCm > 0.0) screenPxPerCm = pxPerCm
+        rulerRev++
+    }
+
+    /** Zoom so a content centimetre is a real centimetre on the glass. */
+    fun realSize() {
+        if (zoomLocked) return
+        viewport.zoomAroundCenter(com.xnotes.core.measure.ScreenCalibration.realSizeZoom(screenPxPerCm, document.dpi))
+        onViewChanged()
+        view.publish()
+    }
+
     /** Adopt the app's pen preferences, so the canvas and the paged note behave the same. */
     fun applyInputPrefs(fingerDraws: Boolean, penButtonTool: Tool?, zoomLockPan: String = "single") {
         interaction.fingerDraws = fingerDraws

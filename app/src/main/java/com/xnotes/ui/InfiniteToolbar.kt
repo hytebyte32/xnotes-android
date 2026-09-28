@@ -166,8 +166,20 @@ fun InfiniteToolbar(
                             editor.zoomBy(InfiniteEditor.ZOOM_STEP)
                         }
                     }
-                    ToolbarItem.FIT ->
-                        ToolbarIcon(XnotesIcons.fit, stringResource(R.string.fit_all), enabled = !editor.zoomLocked) { editor.zoomToFit() }
+                    ToolbarItem.FIT -> Box {
+                        var fitOpen by remember { mutableStateOf(false) }
+                        ToolbarIcon(XnotesIcons.fit, stringResource(R.string.fit_all), enabled = !editor.zoomLocked) { fitOpen = true }
+                        androidx.compose.material3.DropdownMenu(expanded = fitOpen, onDismissRequest = { fitOpen = false }) {
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { androidx.compose.material3.Text(stringResource(R.string.fit_all)) },
+                                onClick = { editor.zoomToFit(); fitOpen = false },
+                            )
+                            androidx.compose.material3.DropdownMenuItem(
+                                text = { androidx.compose.material3.Text(stringResource(R.string.fit_real_size)) },
+                                onClick = { editor.realSize(); fitOpen = false },
+                            )
+                        }
+                    }
 
                     ToolbarItem.ZOOM_LOCK -> ToolbarIcon(
                         if (editor.zoomLocked) XnotesIcons.lock else XnotesIcons.unlock,

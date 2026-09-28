@@ -135,6 +135,7 @@ fun PreferencesPane(
         prefs = p
         editor.applyHomePreferences(p)
     }
+    var calibrating by remember { mutableStateOf(false) }
     var namingColor by remember { mutableStateOf<Rgba?>(null) }
     namingColor?.let { c -> ColorNameDialog(editor, c) { namingColor = null } }
     // Follow out-of-pane preference changes too (the .scm import round-trips a picker).
@@ -251,6 +252,33 @@ fun PreferencesPane(
                 }
             }
             CheckRow(stringResource(R.string.pref_start_fullscreen), editor.fullscreen) { editor.setFullscreenPref(it) }
+
+            HorizontalDivider(color = palette.border.toComposeColor())
+            SectionTitle(stringResource(R.string.pref_measuring))
+            CheckRow(stringResource(R.string.pref_use_inches), prefs.useInches) { update(prefs.copy(useInches = it)) }
+            val measuredPxPerCm = editor.screenPxPerCm()
+            Text(
+                stringResource(
+                    R.string.pref_calibrated_state,
+                    measuredPxPerCm,
+                    stringResource(if (prefs.screenPxPerCm > 0.0) R.string.calib_source_manual else R.string.calib_source_device),
+                ),
+                color = palette.textDim.toComposeColor(),
+                fontSize = 13.sp,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Chip(stringResource(R.string.pref_calibrate_screen), false) { calibrating = true }
+                if (prefs.screenPxPerCm > 0.0) {
+                    Chip(stringResource(R.string.pref_calibrate_reset), false) { update(prefs.copy(screenPxPerCm = 0.0)) }
+                }
+            }
+            if (calibrating) {
+                CalibrationDialog(
+                    initialPxPerCm = measuredPxPerCm,
+                    onSave = { update(prefs.copy(screenPxPerCm = it)); calibrating = false },
+                    onDismiss = { calibrating = false },
+                )
+            }
 
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle(stringResource(R.string.pref_input))

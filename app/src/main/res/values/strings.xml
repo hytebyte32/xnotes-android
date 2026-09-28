@@ -174,6 +174,19 @@
     <string name="pref_accent_colour">Accent colour</string>
     <string name="pref_start_fullscreen">Start in fullscreen</string>
     <string name="pref_input">Input</string>
+    <string name="pref_measuring">Measuring</string>
+    <string name="pref_use_inches">Show measurements in inches</string>
+    <string name="pref_calibrate_screen">Calibrate screen…</string>
+    <string name="pref_calibrate_reset">Use device density</string>
+    <string name="pref_calibrated_state">Screen scale: %1$.1f px per cm (%2$s)</string>
+    <string name="calib_source_device">device-reported</string>
+    <string name="calib_source_manual">calibrated</string>
+    <string name="calib_title">Calibrate screen</string>
+    <string name="calib_help">Hold the object against the screen and drag the handle until the bar is exactly as long as the object.</string>
+    <string name="calib_custom">Custom</string>
+    <string name="calib_length_cm">Length (cm)</string>
+    <string name="calib_save">Save</string>
+    <string name="fit_real_size">Real size (1:1)</string>
     <string name="pref_finger_draws">Draw with finger (off = finger pans)</string>
     <string name="pref_zoom_lock_pan">Panning while zoom is locked</string>
     <string name="pan_single">Single-finger pan</string>

@@ -650,6 +650,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         canvas.replaceDocument(doc)
         canvas.applyPalette(palette)
         canvas.applyInputPrefs(settings.prefs.fingerDraws, controller.penButtonTool, settings.prefs.zoomLockPan)
+        canvas.applyMeasurePrefs(settings.prefs.useInches, screenPxPerCm())
         canvas.applyZoomRange(settings.prefs.canvasMinZoomPercent, settings.prefs.canvasMaxZoomPercent)
         canvas.onContentChanged = { scheduleCanvasAutosave() }
         // Only a canvas living under the granted folder autosaves; anything else is left alone,
@@ -1789,6 +1790,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER),
             p.zoomLockPan,
         )
+        infiniteOrNull?.applyMeasurePrefs(p.useInches, com.xnotes.core.measure.ScreenCalibration.resolve(p.screenPxPerCm, appContext.resources.displayMetrics.xdpi.toDouble()))
         infiniteOrNull?.applyZoomRange(p.canvasMinZoomPercent, p.canvasMaxZoomPercent)
         // Both surfaces' pads: the switch is about the device, not about one of them.
         pad.frontBuffering = !p.disableFrontBuffering
@@ -4925,6 +4927,19 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     private fun afterView() {
         refreshView()
         view.requestRender()
+    }
+
+    /** Screen pixels per real centimetre: the hand calibration if there is one, else what the device reports. */
+    fun screenPxPerCm(): Double = com.xnotes.core.measure.ScreenCalibration.resolve(
+        settings.prefs.screenPxPerCm,
+        appContext.resources.displayMetrics.xdpi.toDouble(),
+    )
+
+    /** Zoom so a content centimetre is a real centimetre on the glass (the 1:1 view). */
+    fun realSize() {
+        val z = com.xnotes.core.measure.ScreenCalibration.realSizeZoom(screenPxPerCm(), state.document.dpi)
+        state.setZoomAnchored(Pt(state.viewportW / 2.0, state.viewportH / 2.0), z)
+        afterView()
     }
 
     fun zoomIn() { state.zoomByStep(true); afterView() }

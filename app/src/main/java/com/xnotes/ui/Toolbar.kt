@@ -656,6 +656,7 @@ private fun FitMenu(editor: Editor) {
             DropdownMenuItem(text = { Text(stringResource(R.string.fit_page)) }, onClick = { editor.fitPage(); expanded = false })
             DropdownMenuItem(text = { Text(stringResource(R.string.fit_width)) }, onClick = { editor.fitWidth(); expanded = false })
             DropdownMenuItem(text = { Text(stringResource(R.string.fit_height)) }, onClick = { editor.fitHeight(); expanded = false })
+            DropdownMenuItem(text = { Text(stringResource(R.string.fit_real_size)) }, onClick = { editor.realSize(); expanded = false })
         }
     }
 }
