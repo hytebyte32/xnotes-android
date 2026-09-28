@@ -70,6 +70,14 @@ class InfiniteDocument(
         fun onReset() {}
     }
 
+    /**
+     * Extent of a limited axis in content pixels, or null for infinite. A limited axis spans
+     * 0..limit; the canvas stays scrollable a little past it (a soft edge). Kept outside the
+     * constructor so existing callers are untouched.
+     */
+    var limitW: Double? = null
+    var limitH: Double? = null
+
     var listener: Listener? = null
 
     private val backing = ArrayList<CanvasItem>()
@@ -107,6 +115,8 @@ class InfiniteDocument(
      */
     fun snapshotForWrite(): InfiniteDocument {
         val copy = InfiniteDocument(dpi, path, displayName, dirty, background, waypoints.toMutableList(), lastView, created)
+        copy.limitW = limitW
+        copy.limitH = limitH
         copy.backing.addAll(backing)
         return copy
     }

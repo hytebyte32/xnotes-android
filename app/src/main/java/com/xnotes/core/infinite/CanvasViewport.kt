@@ -68,17 +68,31 @@ class CanvasViewport {
     /** Content pixels per device pixel at the current zoom, the scale a stroke width is drawn at. */
     val contentPxPerDevicePx: Double get() = 1.0 / zoom
 
+    // --- axis limits ---
+
+    /** Extent of a limited axis in content px (spanning 0..limit), or null when that axis is infinite. */
+    var limitW: Double? = null
+    var limitH: Double? = null
+
+    /** Keep the scroll inside the soft edge of any limited axis. */
+    fun clampToLimits() {
+        limitW?.let { scrollX = clampAxis(scrollX, it, widthPx / zoom) }
+        limitH?.let { scrollY = clampAxis(scrollY, it, heightPx / zoom) }
+    }
+
     // --- movement ---
 
     /** Drag the content with a finger: [dx]/[dy] are viewport-pixel deltas of the pointer. */
     fun panByViewport(dx: Double, dy: Double) {
         scrollX -= dx / zoom
         scrollY -= dy / zoom
+        clampToLimits()
     }
 
     fun panByContent(dx: Double, dy: Double) {
         scrollX += dx
         scrollY += dy
+        clampToLimits()
     }
 
     /**
@@ -91,6 +105,7 @@ class CanvasViewport {
         zoom = target
         scrollX = anchor.x - vx / zoom
         scrollY = anchor.y - vy / zoom
+        clampToLimits()
         return zoom
     }
 
@@ -102,6 +117,7 @@ class CanvasViewport {
     fun centerOn(cx: Double, cy: Double) {
         scrollX = cx - (insetLeft + clearW / 2.0) / zoom
         scrollY = cy - (insetTop + clearH / 2.0) / zoom
+        clampToLimits()
     }
 
     val centerContent: Pt
@@ -138,6 +154,20 @@ class CanvasViewport {
     }
 
     companion object {
+        /** How far past a limited edge you can scroll, as a share of the visible span. */
+        const val SOFT_EDGE = 0.25
+
+        /**
+         * Scroll [s] for an axis of extent 0..[limit] showing [span] content px: free within the
+         * extent plus a soft margin either side, centred when the view is wider than all of that.
+         */
+        fun clampAxis(s: Double, limit: Double, span: Double): Double {
+            val pad = SOFT_EDGE * span
+            val lo = -pad
+            val hi = limit + pad - span
+            return if (lo > hi) (lo + hi) / 2.0 else s.coerceIn(lo, hi)
+        }
+
         /** Zoomed all the way out: a wall of content shrinks to a thumbnail. */
         const val MIN_ZOOM = 0.02
 

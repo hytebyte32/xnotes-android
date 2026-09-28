@@ -1154,6 +1154,7 @@ class InfiniteInteraction(
             viewport.scrollX = pinchAnchorContent.x - mid.x / viewport.zoom
             viewport.scrollY = pinchAnchorContent.y - mid.y / viewport.zoom
         }
+        viewport.clampToLimits()
         lastPan = mid
         onViewChanged()
         requestRender()

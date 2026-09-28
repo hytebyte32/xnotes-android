@@ -25,7 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.xnotes.R
 import com.xnotes.core.infinite.CanvasBackground
+import com.xnotes.core.model.Orientation
 import com.xnotes.core.model.PagePattern
+import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.PageStyle
 import com.xnotes.ui.theme.LocalPalette
 import com.xnotes.ui.theme.toComposeColor
@@ -46,6 +48,9 @@ fun CanvasStylesPopup(editor: InfiniteEditor, onDismiss: () -> Unit) {
     // Mirrors the paged StylesPopup: the row shows once the background differs from the saved
     // new-canvas default and stays for the popup session, and a stock background hides it.
     var showNewCanvasRow by remember { mutableStateOf(editor.document.background != editor.newCanvasBackground) }
+
+    var limW by remember { mutableStateOf(editor.document.limitW) }
+    var limH by remember { mutableStateOf(editor.document.limitH) }
 
     fun apply(next: CanvasBackground) {
         background = next
@@ -125,6 +130,51 @@ fun CanvasStylesPopup(editor: InfiniteEditor, onDismiss: () -> Unit) {
                     onPick = { apply(background.copy(paperColor = it)) },
                     dismissOnPick = false,
                 ) { d, p -> PageColorGridPopup(background.paperColor, d, p) }
+            }
+
+            Spacer(Modifier.size(12.dp))
+            StyleCaption("Canvas size")
+            val dpi = editor.document.dpi
+            fun cmOf(px: Double) = PageSize.pxToMm(px, dpi) / 10.0
+            fun pxOf(cm: Double) = PageSize.mmToPx(cm * 10.0, dpi)
+            fun setLimits(w: Double?, h: Double?) {
+                limW = w
+                limH = h
+                editor.setLimits(w, h)
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                ModeChip("Infinite", limW == null && limH == null) { setLimits(null, null) }
+                for (preset in listOf(PageSize.A4, PageSize.A5, PageSize.LETTER, PageSize.SLIDE_16_9)) {
+                    ModeChip(preset.displayName, false) {
+                        val (pw, ph) = preset.pixels(Orientation.PORTRAIT, dpi)
+                        setLimits(pw, ph)
+                    }
+                }
+                ModeChip("A4 landscape", false) {
+                    val (pw, ph) = PageSize.A4.pixels(Orientation.LANDSCAPE, dpi)
+                    setLimits(pw, ph)
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+            StyleCaption("Horizontal")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("Infinite", limW == null) { setLimits(null, limH) }
+                ModeChip("Limited", limW != null) { setLimits(limW ?: pxOf(21.0), limH) }
+            }
+            limW?.let { w ->
+                SliderRow("Width (cm)", cmOf(w).toFloat(), 5f..300f) { setLimits(pxOf(it.toDouble()), limH) }
+            }
+            Spacer(Modifier.size(6.dp))
+            StyleCaption("Vertical")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                ModeChip("Infinite", limH == null) { setLimits(limW, null) }
+                ModeChip("Limited", limH != null) { setLimits(limW, limH ?: pxOf(29.7)) }
+            }
+            limH?.let { h ->
+                SliderRow("Height (cm)", cmOf(h).toFloat(), 5f..300f) { setLimits(limW, pxOf(it.toDouble())) }
             }
 
             Spacer(Modifier.size(8.dp))

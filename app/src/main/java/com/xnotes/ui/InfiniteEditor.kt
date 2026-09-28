@@ -1468,6 +1468,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         interaction.resetGestureState()
         view.background = next.background
         view.paperColor = next.background.paperColor ?: view.paperColor
+        applyLimits()
         rebuildScene()
         appliedInitialView = false
         applyInitialView()
@@ -1487,6 +1488,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         if (appliedInitialView) return
         if (viewport.widthPx <= 0 || viewport.heightPx <= 0) return
         appliedInitialView = true
+        applyLimits()
         val saved = document.lastView
         when {
             saved != null -> viewport.apply(saved)
@@ -1588,7 +1590,29 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         view.publish()
     }
 
+    /** Bumped on every view or limit change so the boundary overlay redraws. */
+    var viewRev by mutableStateOf(0)
+        private set
+
+    /** Push the document's axis limits into the viewport and keep the view inside them. */
+    private fun applyLimits() {
+        viewport.limitW = document.limitW
+        viewport.limitH = document.limitH
+        viewport.clampToLimits()
+    }
+
+    /** Set the extent of each axis in content px; null = infinite. Saved with the canvas. */
+    fun setLimits(w: Double?, h: Double?) {
+        document.limitW = w?.takeIf { it > 0.0 }
+        document.limitH = h?.takeIf { it > 0.0 }
+        applyLimits()
+        markDirty()
+        onViewChanged()
+        view.publish()
+    }
+
     private fun onViewChanged() {
+        viewRev++
         document.lastView = viewport.toWaypoint()
         zoomPercent = Math.round(viewport.zoom * 100).toInt()
         // The menu is anchored in viewport pixels, so a pan or a zoom moves it.
