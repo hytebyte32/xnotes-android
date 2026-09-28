@@ -8,6 +8,7 @@ import com.xnotes.core.infinite.Waypoint
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.ImageItem
+import com.xnotes.core.model.LabelItem
 import com.xnotes.core.model.PagePattern
 import com.xnotes.core.model.PageSize
 import com.xnotes.core.model.PageStyle
@@ -138,7 +139,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                 assets.getOrNull(nextAsset[0]++)?.let { writeImage(j, item, it.first) }
             }
             is ShapeItem -> writeShape(j, item)
-            else -> {} // text and any unrecognized kind: not written, the canvas has none
+            is LabelItem -> writeLabel(j, item)
+            else -> {} // paged text boxes and any unrecognized kind: not written
         }
     }
 
@@ -267,6 +269,19 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
             j.name("dash_gap").value(s.dashGap)
         }
         if (s.locked) j.name("locked").value(true)
+        j.endObject()
+    }
+
+    /** A measurement label: its text, top-left, glyph height and colour. */
+    private fun writeLabel(j: JsonWrite, l: LabelItem) {
+        j.beginObject()
+        j.name("kind").value(LabelItem.KIND)
+        j.name("text").value(l.text)
+        j.name("start").beginArray().value(l.pos.x).value(l.pos.y).endArray()
+        j.name("label_h").value(l.height)
+        j.name("stroke_rgba")
+        writeRgba(j, l.rgba)
+        if (l.locked) j.name("locked").value(true)
         j.endObject()
     }
 
@@ -517,6 +532,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         var dashed = false
         var dashLength = 10.0
         var dashGap = 8.0
+        var text: String? = null
+        var labelH = 0.0
     }
 
     /** Stroke config fields as written; null = absent, so defaults resolve exactly as before. */
@@ -568,6 +585,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                 "dashed" -> s.dashed = boolOr(p, false)
                 "dash_length" -> s.dashLength = doubleOr(p, 10.0)
                 "dash_gap" -> s.dashGap = doubleOr(p, 8.0)
+                "text" -> s.text = stringOrNull(p)
+                "label_h" -> s.labelH = doubleOr(p, 0.0)
                 "locked" -> s.locked = boolOr(p, false)
                 else -> p.skipValue()
             }
@@ -588,6 +607,12 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                 }
             }
             ShapeItem.KIND -> items.add(buildShape(s))
+            LabelItem.KIND -> {
+                val t = s.text
+                if (!t.isNullOrEmpty() && s.labelH > 0.0) {
+                    items.add(LabelItem(s.start ?: Pt.ZERO, t, s.labelH, s.strokeRgba ?: LabelItem.DEFAULT_COLOR))
+                }
+            }
             else -> {} // text and any unrecognized kind: skipped (forgiving)
         }
         // Absent on every canvas written before locking existed, which reads back as unlocked.

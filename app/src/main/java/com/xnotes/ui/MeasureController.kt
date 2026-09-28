@@ -4,25 +4,33 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import com.xnotes.canvas.Ruler
-import com.xnotes.canvas.RulerButton
+import com.xnotes.canvas.RulerMath
 import com.xnotes.core.geometry.Pt
+import com.xnotes.core.measure.Measure
 import com.xnotes.core.measure.PointRuler
 import com.xnotes.core.measure.PointRulerPart
 import com.xnotes.core.measure.Protractor
 import com.xnotes.core.measure.RulerMode
-import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.max
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
- * The measuring rulers, shared by both canvases: the state, the touch handling, and nothing that
+ * The reading a finished measurement leaves on the canvas: [text] centred on [centre], both in
+ * content space, with [heightPx] the glyph height in content px that makes it about half a real
+ * centimetre tall. Each canvas turns it into whatever text item it has.
+ */
+class MeasureLabel(val text: String, val centre: Pt, val heightPx: Double)
+
+/**
+ * The measuring tools, shared by both canvases: the state, the touch handling, and nothing that
  * draws. Each canvas hands over how it maps between viewport pixels and content, and forwards
  * presses here first; [RulerOverlay] draws whatever this holds.
  *
- * Two rulers live here. The band is a screen-fixed straightedge whose graduations follow the zoom.
- * The two-point ruler is a line set on the content itself, so its reading holds still however the
- * canvas is panned or zoomed. Presses arrive in viewport pixels.
+ * Two tools live here. The two-point ruler is a line set on the content itself, so its reading
+ * holds still however the canvas is panned or zoomed; the protractor sets a baseline and then an
+ * arc. Presses arrive in viewport pixels. When a measurement is finished it is handed to the
+ * canvas to keep, along with a text label of its reading.
  */
 @Stable
 class MeasureController(
@@ -35,19 +43,21 @@ class MeasureController(
     val density: Double,
 ) {
     val point = PointRuler()
-    val band = Ruler()
     val protractor = Protractor()
 
     /** Decimal places on the protractor readout. */
     var protractorDecimals by mutableStateOf(1)
 
-    /** A finished protractor: centre, baseline end and the clean arc, all in content space. */
-    var onProtractor: (com.xnotes.core.geometry.Pt, com.xnotes.core.geometry.Pt, List<com.xnotes.core.geometry.Pt>) -> Unit = { _, _, _ -> }
+    /** A finished protractor: centre, baseline end and the clean arc, all in content space, with its reading. */
+    var onProtractor: (Pt, Pt, List<Pt>, MeasureLabel) -> Unit = { _, _, _, _ -> }
+
+    /** A finished two-point ruler: its start and end in content space, with its reading. */
+    var onRuler: (Pt, Pt, MeasureLabel) -> Unit = { _, _, _ -> }
 
     var mode by mutableStateOf(RulerMode.OFF)
         private set
 
-    /** Bumped on every change to a ruler or to the view under it, so the overlay redraws. */
+    /** Bumped on every change to a tool or to the view under it, so the overlay redraws. */
     var rev by mutableStateOf(0)
         private set
 
@@ -59,27 +69,17 @@ class MeasureController(
     fun toViewportPt(p: Pt): Pt = toViewport(p)
 
     fun switchTo(next: RulerMode) {
+        // Leaving the ruler keeps its last reading on the canvas.
+        if (mode == RulerMode.TWO_POINT && next != RulerMode.TWO_POINT) keepRuler()
         mode = next
-        band.visible = next == RulerMode.BAND
-        if (next == RulerMode.BAND && !band.initialized) {
-            val (w, h) = viewportSize()
-            band.placeDefault(w, h, density)
-        }
         if (next != RulerMode.PROTRACTOR) protractor.reset()
         active = Active.NONE
         rev++
     }
 
-    /** Off, then the band, then the two-point line, then off again. */
+    /** Off, then the ruler, then off again; from the protractor, to the ruler. */
     fun cycle() {
-        switchTo(
-            when (mode) {
-                RulerMode.OFF -> RulerMode.BAND
-                RulerMode.BAND -> RulerMode.TWO_POINT
-                RulerMode.TWO_POINT -> RulerMode.OFF
-                RulerMode.PROTRACTOR -> RulerMode.BAND
-            },
-        )
+        switchTo(if (mode == RulerMode.TWO_POINT) RulerMode.OFF else RulerMode.TWO_POINT)
     }
 
     /** The protractor on, or off if it already is. */
@@ -94,9 +94,9 @@ class MeasureController(
         rev++
     }
 
-    /** Throw the two-point line away so the next press places a new one. */
+    /** Keep the current line's reading and clear it, so the next press places a new one. */
     fun newLine() {
-        point.clear()
+        keepRuler()
         rev++
     }
 
@@ -105,29 +105,46 @@ class MeasureController(
         if (mode != RulerMode.OFF) rev++
     }
 
-    /** How far the band's rotation handles sit from its centre, kept on screen. */
-    fun bandHandleDist(): Double {
-        val (w, h) = viewportSize()
-        return 0.30 * minOf(w, h)
+    /** Where the ruler's rotate grip sits off the middle of its strip, in viewport pixels. */
+    fun gripArmPx(): Double = (STRIP_DP / 2.0 + GRIP_GAP_DP) * density
+
+    /** The ruler strip's full thickness, in viewport pixels. */
+    fun stripPx(): Double = STRIP_DP * density
+
+    // --- keeping a measurement ---
+
+    /** Glyph height for a saved reading: about half a real centimetre. */
+    private fun labelHeight(): Double = RulerMath.contentPxPerCm(dpi) * LABEL_CM
+
+    private fun keepRuler() {
+        if (!point.placed) {
+            point.clear()
+            return
+        }
+        val a = point.start
+        val b = point.end
+        val h = labelHeight()
+        val normal = point.direction().perp()
+        val centre = (a + b) * 0.5 + normal * (h * 1.3)
+        val text = Measure.format(point.lengthPx, dpi, useInches)
+        point.clear()
+        onRuler(a, b, MeasureLabel(text, centre, h))
     }
 
     // --- touch ---
 
-    private enum class Active { NONE, PLACING, POINT_PART, BAND_MOVE, BAND_ROTATE, PROT_BASE, PROT_ARC }
+    private enum class Active { NONE, PLACING, POINT_PART, PROT_BASE, PROT_ARC }
 
     private var active = Active.NONE
     private var part: PointRulerPart? = null
     private var partStart: PointRuler.Snapshot? = null
     private var grab = Pt.ZERO
     private var grabAngle = 0.0
-    private var bandGrabOffset = Pt.ZERO
-    private var bandRotateSign = 1.0
 
-    /** A press at viewport [vp]. True when a ruler took it, which then drives the gesture. */
+    /** A press at viewport [vp]. True when a tool took it, which then drives the gesture. */
     fun down(vp: Pt, finger: Boolean): Boolean = when (mode) {
         RulerMode.OFF -> false
         RulerMode.TWO_POINT -> pointDown(vp, finger)
-        RulerMode.BAND -> bandDown(vp, finger)
         RulerMode.PROTRACTOR -> protractorDown(vp)
     }
 
@@ -138,17 +155,6 @@ class MeasureController(
                 rev++
             }
             Active.POINT_PART -> pointMove(toContent(vp))
-            Active.BAND_MOVE -> {
-                band.center = vp + bandGrabOffset
-                rev++
-            }
-            Active.BAND_ROTATE -> {
-                if (!band.lockAngle) {
-                    val v = (vp - band.center) * bandRotateSign
-                    band.angleRad = Ruler.snapToAxes(atan2(v.y, v.x))
-                }
-                rev++
-            }
             Active.PROT_BASE -> {
                 protractor.dragBaseline(toContent(vp))
                 rev++
@@ -187,7 +193,7 @@ class MeasureController(
         return true
     }
 
-    /** The pen came up: a real sweep is committed as a baseline and a clean arc; a sliver is dropped. */
+    /** The pen came up: a real sweep is kept as a baseline, a clean arc and its reading; a sliver is dropped. */
     private fun finishArc() {
         if (protractor.angleDegrees() < MIN_ARC_DEG) {
             protractor.cancelArc()
@@ -196,8 +202,13 @@ class MeasureController(
         val c = protractor.centre
         val b = protractor.baseEnd
         val arc = protractor.arcPoints()
+        val h = labelHeight()
+        val mid = protractor.baseAngle() + protractor.sweep / 2.0
+        val d = minOf(h * 2.5, protractor.radius * 0.6)
+        val centre = Pt(c.x + cos(mid) * d, c.y + sin(mid) * d)
+        val text = "%.${protractorDecimals}f°".format(protractor.angleDegrees())
         protractor.reset()
-        onProtractor(c, b, arc)
+        onProtractor(c, b, arc, MeasureLabel(text, centre, h))
     }
 
     private fun pointDown(vp: Pt, finger: Boolean): Boolean {
@@ -210,11 +221,17 @@ class MeasureController(
         }
         val z = zoomNow()
         // A pen never grabs the line itself, so drawing right along it is still drawing.
-        val hit = point.hit(at, HIT_DP * density / z, GRIP_ARM_PX / z, allowBody = finger) ?: return false
+        val hit = point.hit(
+            at,
+            HIT_DP * density / z,
+            gripArmPx() / z,
+            bodyTol = stripPx() / 2.0 / z,
+            allowBody = finger,
+        ) ?: return false
         part = hit
         partStart = point.snapshot()
         grab = at
-        val c = point.pivot()
+        val c = point.start
         grabAngle = atan2(at.y - c.y, at.x - c.x)
         active = Active.POINT_PART
         return true
@@ -226,64 +243,32 @@ class MeasureController(
         point.restore(snap)
         when (p) {
             PointRulerPart.START, PointRulerPart.END -> point.moveEnd(p, at)
-            PointRulerPart.PIVOT -> point.slidePivot(at)
             PointRulerPart.BODY -> point.translate(at.x - grab.x, at.y - grab.y)
             PointRulerPart.ROTATE -> {
-                val c = point.pivot()
+                val c = point.start
                 point.rotateBy(atan2(at.y - c.y, at.x - c.x) - grabAngle)
             }
         }
         rev++
     }
 
-    private fun bandDown(vp: Pt, finger: Boolean): Boolean {
-        val handleTol = max(HIT_DP * density, band.handleRadiusPx())
-        val hi = band.hitHandle(vp, bandHandleDist(), handleTol)
-        if (hi != null && !band.lockAngle) {
-            bandRotateSign = if (hi == 0) 1.0 else -1.0
-            active = Active.BAND_ROTATE
-            return true
-        }
-        val btn = band.hitButton(vp, max(HIT_DP * density, band.buttonRadiusPx()))
-        if (btn != null) {
-            when (btn) {
-                RulerButton.LOCK_POS -> band.lockPosition = !band.lockPosition
-                RulerButton.LOCK_ANGLE -> band.lockAngle = !band.lockAngle
-            }
-            active = Active.NONE
-            rev++
-            return true
-        }
-        // The body moves it, minus a margin along each edge for the pen, so drawing right along the
-        // edge never grabs the ruler.
-        val moveHalf = if (finger) band.thicknessPx / 2.0
-        else (band.thicknessPx / 2.0 - EDGE_MARGIN_DP * density).coerceAtLeast(0.0)
-        if (abs(band.signedAcross(vp)) <= moveHalf) {
-            if (band.lockPosition) {
-                active = Active.NONE // locked: swallowed, so it neither pans nor draws under the band
-            } else {
-                active = Active.BAND_MOVE
-                bandGrabOffset = band.center - vp
-            }
-            return true
-        }
-        return false
-    }
-
     companion object {
         /** How near a handle a press has to land, in dp. */
         const val HIT_DP = 14.0
 
-        /** How far the two-point ruler's rotate grip sits off the line, in viewport pixels. */
-        const val GRIP_ARM_PX = 34.0
+        /** The ruler strip's thickness, in dp. */
+        const val STRIP_DP = 44.0
+
+        /** How far the rotate grip sits clear of the strip's edge, in dp. */
+        const val GRIP_GAP_DP = 22.0
 
         /** Shortest two-point line kept when placed, in dp. */
         const val MIN_LINE_DP = 12.0
 
-        /** Margin along the band's edges where a pen draws instead of grabbing, in dp. */
-        const val EDGE_MARGIN_DP = 24.0
-
         /** Least sweep, in degrees, that counts as an arc. */
         const val MIN_ARC_DEG = 0.5
+
+        /** Height of a saved reading, in real centimetres. */
+        const val LABEL_CM = 0.5
     }
 }

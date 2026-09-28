@@ -178,13 +178,26 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     )
 
     init {
-        measure.onProtractor = { centre, baseEnd, arc ->
+        measure.onProtractor = { centre, baseEnd, arc, label ->
             val ink = inkColor
             val w = shapeConfig.strokeWidth * InteractionController.SHAPE_PEN_PARITY
             val line = ShapeItem(com.xnotes.core.tools.ShapeKind.LINE, centre, baseEnd, ink, w)
             val curve = ShapeItem.poly(com.xnotes.core.tools.ShapeKind.POLYLINE, arc, ink, w)
-            commitItems(listOf(line, curve))
+            commitItems(listOf(line, curve, labelItem(label, ink)))
         }
+        measure.onRuler = { start, end, label ->
+            val ink = inkColor
+            val w = shapeConfig.strokeWidth * InteractionController.SHAPE_PEN_PARITY
+            val line = ShapeItem(com.xnotes.core.tools.ShapeKind.LINE, start, end, ink, w)
+            commitItems(listOf(line, labelItem(label, ink)))
+        }
+    }
+
+    /** A measurement's reading as a label centred on its spot, in the current ink. */
+    private fun labelItem(label: MeasureLabel, ink: com.xnotes.core.model.Rgba): com.xnotes.core.model.LabelItem {
+        val width = com.xnotes.core.model.StrokeFont.width(label.text) * label.heightPx
+        val pos = com.xnotes.core.geometry.Pt(label.centre.x - width / 2.0, label.centre.y - label.heightPx / 2.0)
+        return com.xnotes.core.model.LabelItem(pos, label.text, label.heightPx, ink.withAlpha(255))
     }
 
     /** Whether the minimap is shown. */

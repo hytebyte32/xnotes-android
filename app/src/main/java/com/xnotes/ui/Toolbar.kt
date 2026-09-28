@@ -199,7 +199,7 @@ private fun ToolbarItemView(
         ToolbarItem.WAND ->
             ToolbarIcon(XnotesIcons.magicWand, stringResource(R.string.tool_wand), active = editor.wandEnabled) { editor.toggleWand() }
         ToolbarItem.RULER ->
-            ToolbarIcon(XnotesIcons.ruler, stringResource(R.string.tool_ruler), active = editor.rulerVisible) { editor.toggleRuler() }
+            ToolbarIcon(XnotesIcons.ruler, stringResource(R.string.tool_ruler), active = editor.measure.mode == com.xnotes.core.measure.RulerMode.TWO_POINT) { editor.toggleRuler() }
         ToolbarItem.PROTRACTOR ->
             ToolbarIcon(
                 XnotesIcons.protractor,

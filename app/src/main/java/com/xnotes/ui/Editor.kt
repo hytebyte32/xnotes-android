@@ -274,7 +274,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     val history = History()
     val view = CanvasView(context).also { it.state = state }
 
-    /** The two-point ruler (the band is the controller's own), shared with the infinite canvas. */
+    /** The two-point ruler, shared with the infinite canvas. */
     val measure = MeasureController(
         toContent = { state.viewportToContent(it) },
         toViewport = { state.contentToViewport(it) },
@@ -511,8 +511,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     /** The open note's effective View settings: [viewOverrides] resolved over [viewDefaults].
      *  This is what the canvas, caches and thumbnails all consume. */
     var viewSettings by mutableStateOf(settings.viewDefaults)
-        private set
-    var rulerVisible by mutableStateOf(false)
         private set
     var wandEnabled by mutableStateOf(false)
         private set
@@ -1101,7 +1099,9 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.measureDown = { p, finger -> measure.down(p, finger) }
         controller.measureMove = { measure.move(it) }
         controller.measureUp = { measure.up() }
-        measure.onProtractor = { c, b, arc -> controller.commitProtractor(c, b, arc) }
+        controller.measureActive = { measure.mode != com.xnotes.core.measure.RulerMode.OFF }
+        measure.onProtractor = { c, b, arc, label -> controller.commitProtractor(c, b, arc, label) }
+        measure.onRuler = { a, b, label -> controller.commitRuler(a, b, label) }
         view.input = { ev ->
             // Any fresh canvas touch quietly retires the flow action bar and still does its job.
             if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
@@ -1821,7 +1821,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.fingerDraws = p.fingerDraws
         controller.zoomLockPan = p.zoomLockPan
         controller.detectShapes = p.detectShapes
-        controller.useInches = p.useInches
         measure.useInches = p.useInches
         measure.protractorDecimals = p.protractorDecimals
         flowText.markdownInput = p.markdownInput
@@ -4974,31 +4973,15 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         state.zoomLocked = zoomLocked
     }
 
-    /** The protractor on or off; it and the band never show together. */
+    /** The protractor on or off. */
     fun toggleProtractor() {
-        if (controller.rulerVisible()) {
-            controller.toggleRuler()
-            rulerVisible = false
-        }
         measure.toggleProtractor()
         view.requestRender()
     }
 
-    /** Cycle the ruler: off, the band, the two-point line, off. */
+    /** Cycle the ruler: off, the two-point line, off (the protractor steps to the two-point line). */
     fun toggleRuler() {
-        when {
-            controller.rulerVisible() -> {
-                controller.toggleRuler()
-                measure.switchTo(com.xnotes.core.measure.RulerMode.TWO_POINT)
-            }
-            measure.mode == com.xnotes.core.measure.RulerMode.TWO_POINT ->
-                measure.switchTo(com.xnotes.core.measure.RulerMode.OFF)
-            else -> {
-                measure.switchTo(com.xnotes.core.measure.RulerMode.OFF)
-                controller.toggleRuler()
-            }
-        }
-        rulerVisible = controller.rulerVisible() || measure.mode != com.xnotes.core.measure.RulerMode.OFF
+        measure.cycle()
         view.requestRender()
     }
 

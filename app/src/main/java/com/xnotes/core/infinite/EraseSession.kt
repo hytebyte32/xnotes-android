@@ -4,6 +4,7 @@ import com.xnotes.core.geometry.Rect
 import com.xnotes.core.history.Command
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.ImageItem
+import com.xnotes.core.model.LabelItem
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextItem
@@ -53,7 +54,8 @@ class EraseSession(private val doc: InfiniteDocument) {
         var dirty: Rect? = null
         for (item in doc.itemsIn(box)) {
             if (item.locked || item is ImageItem || item is TextItem) continue
-            val fragments: List<CanvasItem> = if (area) {
+            // A measurement label has no ink to trim, so it goes whole in either mode.
+            val fragments: List<CanvasItem> = if (area && item !is LabelItem) {
                 when (item) {
                     is Stroke -> item.erasedBy(cx, cy, radius) ?: continue
                     is ShapeItem -> item.erasedBy(cx, cy, radius) ?: continue

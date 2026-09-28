@@ -2,6 +2,7 @@ package com.xnotes.core.infinite
 
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.CanvasItem
+import com.xnotes.core.model.LabelItem
 import com.xnotes.core.model.Rgba
 import com.xnotes.core.model.ShapeItem
 import com.xnotes.core.model.Stroke
@@ -99,6 +100,7 @@ object ItemMesher {
         when (item) {
             is Stroke -> meshStroke(item, tolerance)
             is ShapeItem -> meshShape(item, tolerance)
+            is LabelItem -> meshLabel(item, tolerance)
             else -> null // images carry a texture rather than a colour, and take their own path
         }
 
@@ -203,6 +205,14 @@ object ItemMesher {
         var min = Double.MAX_VALUE
         for (w in widths) if (w > 0f && w < min) min = w.toDouble()
         return if (min == Double.MAX_VALUE) 0.0 else min
+    }
+
+    /** A label is its glyph lines, meshed exactly like shape outlines and drawn together. */
+    private fun meshLabel(label: LabelItem, tolerance: Double): MeshedItem? {
+        val parts = ArrayList<MeshPart>()
+        for (s in label.strokes()) parts.addAll(ShapeTessellator.tessellate(s, tolerance))
+        if (parts.isEmpty()) return null
+        return MeshedItem(parts, label.bounds(), label.height * LabelItem.LINE_FRAC / 2.0)
     }
 
     private fun meshShape(shape: ShapeItem, tolerance: Double): MeshedItem? {

@@ -259,8 +259,11 @@ class InfiniteInteraction(
         val vx = e.getX(0).toDouble()
         val vy = e.getY(0).toDouble()
 
-        // The ruler is drawn over everything, so it is asked first.
-        if (onRulerDown(Pt(vx, vy), e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER)) {
+        // The ruler is drawn over everything, so it is asked first, except by the eraser (its end
+        // of the pen, or the side button set to erase), which goes on to erase what the ruler saved.
+        val erasing = e.getToolType(0) == MotionEvent.TOOL_TYPE_ERASER ||
+            (stylusButtons.heldFor(e) && penButtonTool == Tool.ERASER)
+        if (!erasing && onRulerDown(Pt(vx, vy), e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER)) {
             cancelLongPress()
             setInteractive(false, false)
             mode = CanvasPointerMode.RULER
