@@ -396,7 +396,8 @@ class ShapeItem(
         }
         val verts = currentOutline().map { t.apply(it) }
         val bb = Rect.bounding(verts)
-        shape = if (shape.isClosed) ShapeKind.POLYGON else ShapeKind.POLYLINE
+        // A curve stays a curve when turned, so its points stay editable.
+        if (shape != ShapeKind.CURVE) shape = if (shape.isClosed) ShapeKind.POLYGON else ShapeKind.POLYLINE
         start = bb.topLeft
         end = Pt(bb.right, bb.bottom)
         points = normalize(verts, bb)
@@ -411,7 +412,7 @@ class ShapeItem(
             ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.RECTANGLE, ShapeKind.ELLIPSE,
             ShapeKind.CIRCLE, ShapeKind.TRIANGLE -> true
             ShapeKind.POLYGON, ShapeKind.POLYLINE -> (points?.size ?: 0) in 2..MAX_EDIT_POINTS
-            ShapeKind.CURVE -> false
+            ShapeKind.CURVE -> (points?.size ?: 0) >= CURVE_NODES
         }
 
     /** The draggable points, in content space; the index is what [movePoint] takes. */
@@ -423,7 +424,38 @@ class ShapeItem(
         }
         ShapeKind.TRIANGLE -> triangleVertices()
         ShapeKind.POLYGON, ShapeKind.POLYLINE -> absPoints()
-        ShapeKind.CURVE -> emptyList()
+        ShapeKind.CURVE -> curveNodes()
+    }
+
+    /** Evenly spaced points along the curve that can be dragged; the curve is redrawn smoothly through them. */
+    private fun curveNodes(): List<Pt> {
+        val line = absPoints()
+        if (line.size < CURVE_NODES) return emptyList()
+        return (0 until CURVE_NODES).map { k -> line[Math.round(k * (line.size - 1).toDouble() / (CURVE_NODES - 1)).toInt()] }
+    }
+
+    /** Rebuild the curve as a smooth Catmull-Rom spline through [nodes], sampled densely enough to look round. */
+    private fun setCurveFromNodes(nodes: List<Pt>) {
+        val out = ArrayList<Pt>()
+        for (i in 0 until nodes.size - 1) {
+            val p0 = nodes[maxOf(i - 1, 0)]
+            val p1 = nodes[i]
+            val p2 = nodes[i + 1]
+            val p3 = nodes[minOf(i + 2, nodes.size - 1)]
+            for (s in 0 until CURVE_SAMPLES) {
+                val t = s / CURVE_SAMPLES.toDouble()
+                val t2 = t * t
+                val t3 = t2 * t
+                fun axis(a: Double, b: Double, c: Double, d: Double) =
+                    0.5 * ((2 * b) + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3)
+                out.add(Pt(axis(p0.x, p1.x, p2.x, p3.x), axis(p0.y, p1.y, p2.y, p3.y)))
+            }
+        }
+        out.add(nodes.last())
+        val bb = Rect.bounding(out)
+        start = bb.topLeft
+        end = Pt(bb.right, bb.bottom)
+        points = normalize(out, bb)
     }
 
     /**
@@ -451,7 +483,12 @@ class ShapeItem(
                 end = Pt(bb.right, bb.bottom)
                 points = normalize(verts, bb)
             }
-            ShapeKind.CURVE -> Unit
+            ShapeKind.CURVE -> {
+                val nodes = curveNodes().toMutableList()
+                if (index !in nodes.indices) return
+                nodes[index] = to
+                setCurveFromNodes(nodes)
+            }
         }
     }
 
@@ -472,6 +509,10 @@ class ShapeItem(
 
         /** A polygon with more vertices than this (a baked ellipse) keeps the box handles. */
         const val MAX_EDIT_POINTS = 24
+
+        /** A curve is edited through this many points along it, and redrawn with [CURVE_SAMPLES] steps between each. */
+        const val CURVE_NODES = 7
+        const val CURVE_SAMPLES = 12
 
         /** Build a polygon/polyline from absolute [vertices], stored normalized to their box. */
         fun poly(
