@@ -21,7 +21,7 @@ class CanvasViewport {
 
     var zoom: Double = 1.0
         set(value) {
-            field = value.coerceIn(effectiveMinZoom(), maxZoom)
+            field = value.coerceIn(minZoom, maxZoom)
             // Zooming moves what the top-left corner shows, so the view is put back inside the canvas at once.
             clampToLimits()
         }
@@ -42,23 +42,6 @@ class CanvasViewport {
     var insetBottom: Double = 0.0
     private val clearW: Double get() = widthPx - insetLeft - insetRight
     private val clearH: Double get() = heightPx - insetTop - insetBottom
-
-    /**
-     * The smallest zoom allowed: a limited axis never shrinks below the screen, like a page in a
-     * note, so the canvas cannot be zoomed out to a speck. With both axes limited the whole page
-     * fits at the limit. An endless canvas uses [minZoom] alone.
-     */
-    fun effectiveMinZoom(): Double {
-        val w = limitW
-        val h = limitH
-        val fitW = if (w != null && widthPx > 0) widthPx / w else 0.0
-        val fitH = if (h != null && heightPx > 0) heightPx / h else 0.0
-        val fit = when {
-            fitW > 0.0 && fitH > 0.0 -> minOf(fitW, fitH)
-            else -> maxOf(fitW, fitH)
-        }
-        return maxOf(minZoom, minOf(fit, maxZoom))
-    }
 
     /** Clamp [zoom] back into the current limits, after the limits themselves moved. */
     fun clampZoom() {
