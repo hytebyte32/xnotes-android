@@ -4989,12 +4989,12 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         when {
             controller.rulerVisible() -> {
                 controller.toggleRuler()
-                measure.setMode(com.xnotes.core.measure.RulerMode.TWO_POINT)
+                measure.switchTo(com.xnotes.core.measure.RulerMode.TWO_POINT)
             }
             measure.mode == com.xnotes.core.measure.RulerMode.TWO_POINT ->
-                measure.setMode(com.xnotes.core.measure.RulerMode.OFF)
+                measure.switchTo(com.xnotes.core.measure.RulerMode.OFF)
             else -> {
-                measure.setMode(com.xnotes.core.measure.RulerMode.OFF)
+                measure.switchTo(com.xnotes.core.measure.RulerMode.OFF)
                 controller.toggleRuler()
             }
         }

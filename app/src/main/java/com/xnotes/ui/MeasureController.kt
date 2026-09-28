@@ -58,7 +58,7 @@ class MeasureController(
     val size: Pair<Double, Double> get() = viewportSize()
     fun toViewportPt(p: Pt): Pt = toViewport(p)
 
-    fun setMode(next: RulerMode) {
+    fun switchTo(next: RulerMode) {
         mode = next
         band.visible = next == RulerMode.BAND
         if (next == RulerMode.BAND && !band.initialized) {
@@ -72,7 +72,7 @@ class MeasureController(
 
     /** Off, then the band, then the two-point line, then off again. */
     fun cycle() {
-        setMode(
+        switchTo(
             when (mode) {
                 RulerMode.OFF -> RulerMode.BAND
                 RulerMode.BAND -> RulerMode.TWO_POINT
@@ -84,7 +84,7 @@ class MeasureController(
 
     /** The protractor on, or off if it already is. */
     fun toggleProtractor() {
-        setMode(if (mode == RulerMode.PROTRACTOR) RulerMode.OFF else RulerMode.PROTRACTOR)
+        switchTo(if (mode == RulerMode.PROTRACTOR) RulerMode.OFF else RulerMode.PROTRACTOR)
     }
 
     /** Drop the protractor in progress so the next press sets a new centre. */
