@@ -3065,6 +3065,7 @@ class InteractionController(
         drawRulerTicks(r, density, pal, sMin, sMax)
         drawRulerButtons(r, pal)
         drawRulerHandles(r, density, pal)
+        drawRulerCrosshair(r, density, pal)
 
         if (snapEngaged) {
             val a = snapRunStartEdge
@@ -3074,6 +3075,24 @@ class InteractionController(
                 val cm = RulerMath.viewportLenToCm(a.distanceTo(b), state.zoom, document.dpi)
                 drawReadout(r, "%.1f cm".format(cm), pen + Pt(30.0, -30.0) * density, density, pal)
             }
+        }
+    }
+
+    /**
+     * A small crosshair on the ruler's zero point, the pivot it turns about, so the zero can be set
+     * exactly on a point. It follows the ruler's own axes (along the band and across it) and is
+     * drawn over a light halo so it stays readable on ink and on the frosted band alike.
+     */
+    private fun drawRulerCrosshair(r: Renderer, density: Double, pal: Palette) {
+        val c = ruler.center
+        val arm = 10.0 * density
+        val halo = Pen(pal.menuBg.scaleAlpha(0.9), 3.4, cosmetic = true)
+        val line = Pen(pal.text, 1.2, cosmetic = true)
+        for (axis in listOf(ruler.direction(), ruler.normal())) {
+            val a = c - axis * arm
+            val b = c + axis * arm
+            r.strokePolyline(listOf(a, b), halo)
+            r.strokePolyline(listOf(a, b), line)
         }
     }
 
