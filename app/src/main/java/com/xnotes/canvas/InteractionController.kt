@@ -71,7 +71,7 @@ import kotlin.math.sin
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode {
     IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, TRANSFORM, PAN, PINCH, FLOW_TEXT,
-    TEXT_DRAG, RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE,
+    TEXT_DRAG, RULER_MOVE, RULER_TRANSFORM, RULER_ROTATE, RULER_TWO,
 }
 
 /**
@@ -254,6 +254,14 @@ class InteractionController(
     private var pinchAnchorContent = Pt.ZERO
 
     // RULER (transient screen-space straightedge; no model/undo state)
+    /** The shared two-point ruler: a press at a viewport point, whether by a finger; true when it took it. */
+    var measureDown: (Pt, Boolean) -> Boolean = { _, _ -> false }
+    var measureMove: (Pt) -> Unit = {}
+    var measureUp: () -> Unit = {}
+
+    /** Graduations in inches instead of cm/mm. */
+    var useInches: Boolean = false
+
     val ruler = Ruler()
     private var rulerGrabOffset = Pt.ZERO            // ruler.center − grab point, for 1-finger move
     private var rulerXformStartCentroid = Pt.ZERO    // two-finger transform anchors
@@ -590,6 +598,13 @@ class InteractionController(
         // Touching the ruler grabs it before the normal tool dispatch — for the stylus too, so a
         // pen-down ON the body moves it. A pen-down OFF the body falls through to drawing, where the
         // magnet snaps the in-progress stroke to the edge. Its buttons toggle; its body moves it.
+        // The two-point ruler (drawn by the shared overlay) gets first refusal, as the band does below.
+        if (measureDown(Pt(vx, vy), toolType == MotionEvent.TOOL_TYPE_FINGER)) {
+            mode = PointerMode.RULER_TWO
+            cancelLongPress()
+            requestRender()
+            return
+        }
         if (ruler.visible) {
             val v = Pt(vx, vy)
             val hi = ruler.hitHandle(v, rulerHandleDist(), (RULER_HANDLE_HIT * state.devicePxPerDp).coerceAtLeast(ruler.handleRadiusPx()))
@@ -665,6 +680,7 @@ class InteractionController(
             return
         }
         if (mode == PointerMode.RULER_ROTATE) return // handle-drag rotation ignores extra fingers
+        if (mode == PointerMode.RULER_TWO) return
         if (mode == PointerMode.DRAW && drawingIsStylus) return
         // A finger erase (finger-draw on) yields to a two-finger pinch: commit what was erased so
         // far as one undo step, then start the zoom. A stylus-eraser erase keeps ignoring incidental
@@ -689,6 +705,7 @@ class InteractionController(
             PointerMode.RULER_MOVE -> { ruler.center = Pt(vx, vy) + rulerGrabOffset; requestRender() }
             PointerMode.RULER_TRANSFORM -> updateRulerTransform(e)
             PointerMode.RULER_ROTATE -> updateRulerRotate(e)
+            PointerMode.RULER_TWO -> measureMove(Pt(vx, vy))
             PointerMode.ERASE -> eraseAt(vx, vy)
             PointerMode.BAND -> extendBand(content)
             PointerMode.LASSO_DRAW -> extendLasso(content)
@@ -774,6 +791,7 @@ class InteractionController(
             PointerMode.RULER_MOVE -> { mode = PointerMode.IDLE; requestRender() }
             PointerMode.RULER_TRANSFORM -> { mode = PointerMode.IDLE; requestRender() }
             PointerMode.RULER_ROTATE -> { mode = PointerMode.IDLE; requestRender() }
+            PointerMode.RULER_TWO -> { measureUp(); mode = PointerMode.IDLE; requestRender() }
             else -> Unit
         }
     }
@@ -2852,6 +2870,7 @@ class InteractionController(
 
     private fun abortGesture() {
         cancelLongPress()
+        if (mode == PointerMode.RULER_TWO) { measureUp(); mode = PointerMode.IDLE }
         cancelDwell()
         dwellEligible = false
         snappedSelectionPendingMenu = false
@@ -3111,7 +3130,7 @@ class InteractionController(
             val pen = snapPenViewport
             if (a != null && b != null && pen != null) {
                 val cm = RulerMath.viewportLenToCm(a.distanceTo(b), state.zoom, document.dpi)
-                drawReadout(r, "%.1f cm".format(cm), pen + Pt(30.0, -30.0) * density, density, pal)
+                drawReadout(r, if (useInches) "%.2f in".format(cm / com.xnotes.core.measure.CM_PER_INCH) else "%.1f cm".format(cm), pen + Pt(30.0, -30.0) * density, density, pal)
             }
         }
     }
@@ -3159,17 +3178,21 @@ class InteractionController(
 
     /** cm/mm graduations on BOTH long edges; spacing scales with zoom; origin (0) at the ruler centre. */
     private fun drawRulerTicks(r: Renderer, density: Double, pal: Palette, sMin: Double, sMax: Double) {
-        val cmPx = RulerMath.contentPxPerCm(document.dpi) * state.zoom
+        // One whole unit (a cm, or an inch when measuring in inches) in screen pixels, split into tenths
+        // or, for inches, eighths.
+        val cmPx = RulerMath.contentPxPerCm(document.dpi) * state.zoom *
+            (if (useInches) com.xnotes.core.measure.CM_PER_INCH else 1.0)
         if (cmPx <= 0.0) return
+        val div = if (useInches) 8 else 10
         val d = ruler.direction()
         val n = ruler.normal()
         val ht = ruler.thicknessPx / 2.0
         val tickPen = Pen(pal.text, 1.0, cosmetic = true)
         val labelFont = FontSpec(5.0 * density)
-        val showMinor = cmPx >= 46.0
+        val showMinor = cmPx >= (if (useInches) 84.0 else 46.0)
         val showLabels = cmPx >= 26.0
-        val unitPx = if (showMinor) cmPx / 10.0 else cmPx
-        val unitsPerLabel = if (showMinor) 10 else 1
+        val unitPx = if (showMinor) cmPx / div else cmPx
+        val unitsPerLabel = if (showMinor) div else 1
         val step = if (showMinor || cmPx >= 12.0) 1 else 5 // crowd guard when zoomed far out
         var j = Math.ceil(sMin / unitPx).toInt()
         val jMax = Math.floor(sMax / unitPx).toInt()
@@ -3179,8 +3202,8 @@ class InteractionController(
                 val top = mid + n * ht
                 val bot = mid - n * ht
                 val len = when {
-                    !showMinor || j % 10 == 0 -> ht * 0.46
-                    j % 5 == 0 -> ht * 0.30
+                    !showMinor || j % div == 0 -> ht * 0.46
+                    j % (div / 2) == 0 -> ht * 0.30
                     else -> ht * 0.18
                 }
                 r.strokePolyline(listOf(top, top - n * len), tickPen)

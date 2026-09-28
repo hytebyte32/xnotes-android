@@ -1187,6 +1187,7 @@ private fun EditorPane(
                         editor.editingField?.let { field ->
                             com.xnotes.ui.TextEditorOverlay(editor, field)
                         }
+                        com.xnotes.ui.RulerOverlay(editor.measure)
                         floatingBar()
                         com.xnotes.ui.SelectionMenu(editor)
                         com.xnotes.ui.ScreenshotMenu(editor)

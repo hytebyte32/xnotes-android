@@ -274,6 +274,16 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     val history = History()
     val view = CanvasView(context).also { it.state = state }
 
+    /** The two-point ruler (the band is the controller's own), shared with the infinite canvas. */
+    val measure = MeasureController(
+        toContent = { state.viewportToContent(it) },
+        toViewport = { state.contentToViewport(it) },
+        zoomNow = { state.zoom },
+        viewportSize = { state.viewportW.toDouble() to state.viewportH.toDouble() },
+        documentDpi = { state.document.dpi },
+        density = context.resources.displayMetrics.density.toDouble(),
+    )
+
     /** The front buffer wet ink goes into, above [view] and transparent whenever no pen is down. */
     val pad = com.xnotes.gl.GlWetPad(context, onTop = true)
 
@@ -1088,6 +1098,9 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     }
 
     init {
+        controller.measureDown = { p, finger -> measure.down(p, finger) }
+        controller.measureMove = { measure.move(it) }
+        controller.measureUp = { measure.up() }
         view.input = { ev ->
             // Any fresh canvas touch quietly retires the flow action bar and still does its job.
             if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
@@ -1807,6 +1820,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.fingerDraws = p.fingerDraws
         controller.zoomLockPan = p.zoomLockPan
         controller.detectShapes = p.detectShapes
+        controller.useInches = p.useInches
+        measure.useInches = p.useInches
         flowText.markdownInput = p.markdownInput
         flowText.slashCommands = p.slashCommands
         controller.penButtonTool = if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER)
@@ -2043,6 +2058,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     }
 
     private fun refreshView() {
+        measure.viewChanged()
         if (editingTable != null || tableMenu != null) tableChromeTick++
         zoomPercent = (state.zoom * 100).roundToInt()
         pageIndex = state.currentPageIndex()
@@ -4956,9 +4972,19 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         state.zoomLocked = zoomLocked
     }
 
+    /** Cycle the ruler: off, the band, the two-point line, off. */
     fun toggleRuler() {
-        controller.toggleRuler()
-        rulerVisible = controller.rulerVisible()
+        when {
+            controller.rulerVisible() -> {
+                controller.toggleRuler()
+                measure.setMode(com.xnotes.core.measure.RulerMode.TWO_POINT)
+            }
+            measure.mode == com.xnotes.core.measure.RulerMode.TWO_POINT ->
+                measure.setMode(com.xnotes.core.measure.RulerMode.OFF)
+            else -> controller.toggleRuler()
+        }
+        rulerVisible = controller.rulerVisible() || measure.mode != com.xnotes.core.measure.RulerMode.OFF
+        view.requestRender()
     }
 
     fun toggleWand() {
