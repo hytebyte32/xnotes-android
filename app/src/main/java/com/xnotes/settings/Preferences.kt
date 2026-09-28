@@ -39,6 +39,10 @@ data class Preferences(
     val zoomLockPan: String = "single",
     /** Whether holding a freehand ink stroke still snaps it to a recognized shape. */
     val detectShapes: Boolean = false,
+    /** Show measuring readouts in inches instead of cm/mm. */
+    val useInches: Boolean = false,
+    /** Screen pixels per real centimetre as calibrated by hand; 0 uses the density the device reports. */
+    val screenPxPerCm: Double = 0.0,
     /** Tool the stylus side button activates while held; "none" disables it. */
     val penButtonTool: String = "eraser",
     /** Whether the side-button tool also activates during hover (no contact needed); eraser/pan only. */
@@ -136,6 +140,8 @@ data class Preferences(
         .put("finger_draws", fingerDraws)
         .put("zoom_lock_pan", zoomLockPan)
         .put("detect_shapes", detectShapes)
+        .put("use_inches", useInches)
+        .put("screen_px_per_cm", screenPxPerCm)
         .put("pen_button_tool", penButtonTool)
         .put("pen_button_hover", penButtonHover)
         .put("two_finger_tap", twoFingerTap)
@@ -260,6 +266,8 @@ data class Preferences(
                 fingerDraws = o.optBoolean("finger_draws", false),
                 zoomLockPan = zoomLockPan,
                 detectShapes = o.optBoolean("detect_shapes", false),
+                useInches = o.optBoolean("use_inches", false),
+                screenPxPerCm = o.optDouble("screen_px_per_cm", 0.0),
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
                 penButtonHover = o.optBoolean("pen_button_hover", false),
                 twoFingerTap = tapAction("two_finger_tap"),
