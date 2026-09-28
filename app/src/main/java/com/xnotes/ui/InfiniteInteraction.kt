@@ -260,7 +260,7 @@ class InfiniteInteraction(
         val vy = e.getY(0).toDouble()
 
         // The ruler is drawn over everything, so it is asked first.
-        if (onRulerDown(viewport.viewportToContent(Pt(vx, vy)), e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER)) {
+        if (onRulerDown(Pt(vx, vy), e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER)) {
             cancelLongPress()
             setInteractive(false, false)
             mode = CanvasPointerMode.RULER
@@ -416,7 +416,7 @@ class InfiniteInteraction(
             CanvasPointerMode.RESIZE -> extendResize(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.ROTATE -> extendRotate(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.POINT -> extendPoint(e.getX(0).toDouble(), e.getY(0).toDouble())
-            CanvasPointerMode.RULER -> onRulerMove(viewport.viewportToContent(Pt(e.getX(0).toDouble(), e.getY(0).toDouble())))
+            CanvasPointerMode.RULER -> onRulerMove(Pt(e.getX(0).toDouble(), e.getY(0).toDouble()))
             CanvasPointerMode.IDLE -> Unit
         }
     }

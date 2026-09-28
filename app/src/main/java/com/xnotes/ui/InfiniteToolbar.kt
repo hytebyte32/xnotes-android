@@ -121,8 +121,8 @@ fun InfiniteToolbar(
                     ToolbarItem.RULER -> ToolbarIcon(
                         XnotesIcons.ruler,
                         stringResource(R.string.tool_ruler),
-                        active = editor.rulerMode != RulerMode.OFF,
-                    ) { editor.toggleRuler() }
+                        active = editor.measure.mode != RulerMode.OFF,
+                    ) { editor.measure.cycle() }
 
                     ToolbarItem.IMAGE -> ToolbarIcon(XnotesIcons.image, stringResource(R.string.insert_image)) { onInsertImage() }
 

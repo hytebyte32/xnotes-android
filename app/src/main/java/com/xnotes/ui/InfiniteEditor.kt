@@ -110,9 +110,9 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         onContextMenu = { vp, content, locked -> contextMenu = ContextMenuTarget(vp.x, vp.y, content, locked) },
         hasPasteContent = { hasClipboardItems || clipboardHasImage },
         onToolChanged = { adoptTool(it) },
-        onRulerDown = { at, finger -> rulerDown(at, finger) },
-        onRulerMove = { rulerMove(it) },
-        onRulerUp = { rulerUp() },
+        onRulerDown = { vp, finger -> measure.down(vp, finger) },
+        onRulerMove = { measure.move(it) },
+        onRulerUp = { measure.up() },
     )
 
     private val devicePxPerDp = appContext.resources.displayMetrics.density.toDouble()
@@ -165,92 +165,17 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     /** Fired after any edit that makes the document dirty, so the host can schedule an autosave. */
     var onContentChanged: (() -> Unit)? = null
 
-    // --- measuring ruler ---
+    // --- measuring rulers ---
 
-    /** The two-point ruler, on the content so it scrolls and zooms with the canvas. */
-    val pointRuler = com.xnotes.core.measure.PointRuler()
-
-    var rulerMode by mutableStateOf(com.xnotes.core.measure.RulerMode.OFF)
-        private set
-
-    /** Bumped whenever the ruler or the view under it changes, so the overlay redraws. */
-    var rulerRev by mutableStateOf(0)
-        private set
-
-    /** Show measurements in inches instead of cm/mm. */
-    var useInches by mutableStateOf(false)
-
-    private var rulerPlacing = false
-    private var rulerPart: com.xnotes.core.measure.PointRulerPart? = null
-    private var rulerStart: com.xnotes.core.measure.PointRuler.Snapshot? = null
-    private var rulerGrab = Pt.ZERO
-    private var rulerGrabAngle = 0.0
-
-    fun toggleRuler() {
-        rulerMode =
-            if (rulerMode == com.xnotes.core.measure.RulerMode.OFF) com.xnotes.core.measure.RulerMode.TWO_POINT
-            else com.xnotes.core.measure.RulerMode.OFF
-        rulerRev++
-    }
-
-    /** Throw the current line away so the next press places a new one. */
-    fun newRulerLine() {
-        pointRuler.clear()
-        rulerRev++
-    }
-
-    private fun rulerDown(at: Pt, finger: Boolean): Boolean {
-        if (rulerMode != com.xnotes.core.measure.RulerMode.TWO_POINT) return false
-        if (!pointRuler.placed) {
-            pointRuler.begin(at)
-            rulerPlacing = true
-            rulerRev++
-            return true
-        }
-        val zoom = viewport.zoom
-        val tol = InfiniteInteraction.HANDLE_TOUCH_PX / zoom
-        val arm = OverlayTessellator.GRIP_ARM_PX / zoom
-        // A pen never grabs the line itself, so drawing right along it is still drawing.
-        val part = pointRuler.hit(at, tol, arm, allowBody = finger) ?: return false
-        rulerPart = part
-        rulerStart = pointRuler.snapshot()
-        rulerGrab = at
-        val c = pointRuler.pivot()
-        rulerGrabAngle = kotlin.math.atan2(at.y - c.y, at.x - c.x)
-        return true
-    }
-
-    private fun rulerMove(at: Pt) {
-        if (rulerPlacing) {
-            pointRuler.dragEnd(at)
-            rulerRev++
-            return
-        }
-        val part = rulerPart ?: return
-        val snap = rulerStart ?: return
-        pointRuler.restore(snap)
-        when (part) {
-            com.xnotes.core.measure.PointRulerPart.START,
-            com.xnotes.core.measure.PointRulerPart.END -> pointRuler.moveEnd(part, at)
-            com.xnotes.core.measure.PointRulerPart.PIVOT -> pointRuler.slidePivot(at)
-            com.xnotes.core.measure.PointRulerPart.BODY -> pointRuler.translate(at.x - rulerGrab.x, at.y - rulerGrab.y)
-            com.xnotes.core.measure.PointRulerPart.ROTATE -> {
-                val c = pointRuler.pivot()
-                pointRuler.rotateBy(kotlin.math.atan2(at.y - c.y, at.x - c.x) - rulerGrabAngle)
-            }
-        }
-        rulerRev++
-    }
-
-    private fun rulerUp() {
-        if (rulerPlacing) {
-            pointRuler.finishPlacing(MIN_RULER_DP * devicePxPerDp / viewport.zoom)
-            rulerPlacing = false
-        }
-        rulerPart = null
-        rulerStart = null
-        rulerRev++
-    }
+    /** The band and the two-point ruler, shared with the paged canvas. */
+    val measure = MeasureController(
+        toContent = { viewport.viewportToContent(it) },
+        toViewport = { viewport.contentToViewport(it) },
+        zoomNow = { viewport.zoom },
+        viewportSize = { viewport.widthPx.toDouble() to viewport.heightPx.toDouble() },
+        documentDpi = { document.dpi },
+        density = appContext.resources.displayMetrics.density.toDouble(),
+    )
 
     /** Whether the minimap is shown. */
     var minimapVisible by mutableStateOf(true)
@@ -1426,9 +1351,9 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     private var screenPxPerCm = com.xnotes.core.measure.ScreenCalibration.pxPerCmFromDpi(160.0)
 
     fun applyMeasurePrefs(inches: Boolean, pxPerCm: Double) {
-        useInches = inches
+        measure.useInches = inches
         if (pxPerCm > 0.0) screenPxPerCm = pxPerCm
-        rulerRev++
+        measure.viewChanged()
     }
 
     /** Zoom so a content centimetre is a real centimetre on the glass. */
@@ -1649,7 +1574,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         zoomPercent = Math.round(viewport.zoom * 100).toInt()
         // The menu is anchored in viewport pixels, so a pan or a zoom moves it.
         refreshSelectionMenu()
-        if (rulerMode != com.xnotes.core.measure.RulerMode.OFF) rulerRev++
+        measure.viewChanged()
         // The minimap maps everything drawn, so its extent moves with the content, not the view.
         view.contentBounds = document.contentBounds()
     }
@@ -1663,9 +1588,6 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     companion object {
-        /** Shortest line the two-point ruler keeps when placed, in dp. */
-        const val MIN_RULER_DP = 12.0
-
         /** Zoom step for the keyboard, matching a comfortable notch of a pinch. */
         const val ZOOM_STEP = 1.25
 
