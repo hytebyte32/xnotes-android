@@ -72,8 +72,9 @@ interface SelectionMenuHost {
      * Recolour and/or re-thicken the selection; a null [color] or [width] leaves that half alone.
      * A [preview] call skips history, and the next call without it records everything since as one
      * undo step, so dragging the thickness slider is a single edit rather than one per sample.
+     * [dashed] sets solid or dotted on the shapes in the selection and is ignored by anything else.
      */
-    fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean = false)
+    fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean = false, dashed: Boolean? = null)
 
     /** The toolbar's ink swatches and recently picked colours, offered by the restyle popup. */
     val hostToolbarColors: List<Rgba>
@@ -162,6 +163,9 @@ private fun SelectionStylePopup(host: SelectionMenuHost, onDismiss: () -> Unit) 
     val shared = opened.firstOrNull()?.color?.takeIf { c -> opened.all { it.color == c } }
     var color by remember { mutableStateOf(shared ?: first?.color ?: Rgba(0, 0, 0)) }
     var width by remember { mutableStateOf((first?.width ?: 1.0).toFloat()) }
+    // Solid or dotted only means something to shapes; anything else in the selection is unaffected.
+    val canDash = opened.any { it.dashed != null }
+    var dotted by remember { mutableStateOf(opened.firstOrNull { it.dashed != null }?.dashed == true) }
     if (first == null) return
 
     DropdownMenu(expanded = true, onDismissRequest = onDismiss, properties = PopupProperties(focusable = false)) {
@@ -202,6 +206,15 @@ private fun SelectionStylePopup(host: SelectionMenuHost, onDismiss: () -> Unit) 
             ) { w ->
                 width = w
                 host.restyleSelection(null, w.toDouble(), preview = true)
+            }
+            if (canDash) {
+                Spacer(Modifier.size(8.dp))
+                StyleCaption("Line style")
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    ModeChip("Solid", !dotted) { dotted = false; host.restyleSelection(null, null, dashed = false) }
+                    ModeChip("Dotted", dotted) { dotted = true; host.restyleSelection(null, null, dashed = true) }
+                }
+                Spacer(Modifier.size(6.dp))
             }
             Text(
                 stringResource(R.string.change_style_hint),

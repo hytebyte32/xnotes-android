@@ -54,14 +54,16 @@ object OverlayTessellator {
         if (zoom <= 0.0) return emptyList()
         val outline = MeshBuilder()
         val half = OUTLINE_PX / zoom / 2.0
-        dashInto(outline, box.corners(), half, closed = true, zoom = zoom, devicePxPerDp = devicePxPerDp, tolerance = tolerance)
+        // A shape edited by its own points shows just those points: no box, and so no stem to it.
+        val boxed = pointHandles == null
+        if (boxed) dashInto(outline, box.corners(), half, closed = true, zoom = zoom, devicePxPerDp = devicePxPerDp, tolerance = tolerance)
 
         // The stem out to the grip, so it reads as attached rather than floating. Solid: it is a
         // join, not a boundary, and a dashed one at this length would be two ticks and a gap.
         val arm = GRIP_ARM_PX / zoom
         val top = com.xnotes.canvas.ResizeMath.obbTopMid(box)
         val grip = com.xnotes.canvas.ResizeMath.obbRotateGrip(box, arm)
-        outline.polylineRibbon(listOf(top, grip), half, closed = false, tolerance = tolerance)
+        if (boxed) outline.polylineRibbon(listOf(top, grip), half, closed = false, tolerance = tolerance)
 
         val marks = MeshBuilder()
         val handleHalf = HANDLE_PX / zoom / 2.0
@@ -70,7 +72,7 @@ object OverlayTessellator {
         for (c in centres) {
             marks.rect(c.x - handleHalf, c.y - handleHalf, handleHalf * 2, handleHalf * 2)
         }
-        marks.circle(grip.x, grip.y, GRIP_PX / zoom / 2.0, tolerance)
+        if (boxed) marks.circle(grip.x, grip.y, GRIP_PX / zoom / 2.0, tolerance)
 
         val parts = ArrayList<MeshPart>(2)
         if (!outline.isEmpty) parts.add(MeshPart(outline.build(), accent, InkPass.OPAQUE))

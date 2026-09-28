@@ -181,9 +181,8 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         measure.onProtractor = { centre, baseEnd, arc, label ->
             val ink = inkColor
             val w = shapeConfig.strokeWidth * InteractionController.SHAPE_PEN_PARITY
-            val line = ShapeItem(com.xnotes.core.tools.ShapeKind.LINE, centre, baseEnd, ink, w)
-            val curve = ShapeItem.poly(com.xnotes.core.tools.ShapeKind.POLYLINE, arc, ink, w)
-            commitItems(listOf(line, curve, labelItem(label, ink)))
+            val shapes = com.xnotes.core.measure.MeasureShapes.protractor(centre, baseEnd, arc, ink, w, label.heightPx * 0.35)
+            commitItems(shapes + labelItem(label, ink))
         }
         measure.onRuler = { start, end, label ->
             val ink = inkColor
@@ -407,6 +406,8 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     // --- tools ---
 
     fun armTool(next: Tool) {
+        // Picking any other tool puts the ruler or protractor away, keeping what it measured.
+        if (tool != next) measure.switchTo(com.xnotes.core.measure.RulerMode.OFF)
         // Leaving the selection tools drops the selection, so its chrome cannot linger over ink.
         if (tool != next && (tool == Tool.SELECT || tool == Tool.LASSO)) interaction.clearSelection()
         adoptTool(next)
@@ -598,16 +599,16 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
      * contract the paged editor uses. The command is wrapped in [OnCanvas] so undo and redo re-file
      * the index and re-mesh through exactly the path the edit did.
      */
-    override fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean) {
+    override fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean, dashed: Boolean?) {
         if (selection.isEmpty) return
         val baseline = restyleBaseline ?: HashMap<CanvasItem, DrawStyle>().also { map ->
             for (item in selection.items) DrawStyle.of(item)?.let { map[item] = it }
         }
         restyleBaseline = if (preview) baseline else null
-        if (color != null || width != null) {
+        if (color != null || width != null || dashed != null) {
             for (item in selection.items) {
                 val current = DrawStyle.of(item) ?: continue
-                DrawStyle(color ?: current.color, width ?: current.width).applyTo(item)
+                DrawStyle(color ?: current.color, width ?: current.width, current.dashed?.let { dashed ?: it }).applyTo(item)
             }
             document.itemsChanged(selection.items)
         }
@@ -1505,7 +1506,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         val saved = document.lastView
         when {
             saved != null -> viewport.apply(saved)
-            else -> document.contentBounds()?.let { viewport.fit(it) } ?: viewport.centerOn(0.0, 0.0)
+            else -> document.contentBounds()?.let { viewport.fit(it) } ?: frameCanvas()
         }
         onViewChanged()
         view.publish()
@@ -1609,9 +1610,32 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
 
     /** Push the document's axis limits into the viewport and keep the view inside them. */
     private fun applyLimits() {
+        viewport.originX = document.originX
+        viewport.originY = document.originY
         viewport.limitW = document.limitW
         viewport.limitH = document.limitH
         viewport.clampToLimits()
+    }
+
+    /**
+     * Frame the canvas the way a fresh note opens: a limited axis fits the screen like a page of
+     * that size, the other axis starting at the top or left and running on from there; with both
+     * axes endless, just the top-left corner.
+     */
+    private fun frameCanvas() {
+        val vw = viewport.widthPx.toDouble()
+        val vh = viewport.heightPx.toDouble()
+        if (vw <= 0.0 || vh <= 0.0) return
+        val ox = document.originX
+        val oy = document.originY
+        val w = document.limitW
+        val h = document.limitH
+        when {
+            w != null && h != null -> viewport.fit(com.xnotes.core.geometry.Rect(ox, oy, w, h))
+            w != null -> viewport.fit(com.xnotes.core.geometry.Rect(ox, oy, w, w * vh / vw))
+            h != null -> viewport.fit(com.xnotes.core.geometry.Rect(ox, oy, h * vw / vh, h))
+            else -> viewport.centerOn(ox + vw / viewport.zoom / 2.0, oy + vh / viewport.zoom / 2.0)
+        }
     }
 
     /** Set the extent of each axis in content px; null = infinite. Saved with the canvas. */
@@ -1619,6 +1643,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         document.limitW = w?.takeIf { it > 0.0 }
         document.limitH = h?.takeIf { it > 0.0 }
         applyLimits()
+        frameCanvas()
         markDirty()
         onViewChanged()
         view.publish()

@@ -1099,7 +1099,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.measureDown = { p, finger -> measure.down(p, finger) }
         controller.measureMove = { measure.move(it) }
         controller.measureUp = { measure.up() }
-        controller.measureActive = { measure.mode != com.xnotes.core.measure.RulerMode.OFF }
         measure.onProtractor = { c, b, arc, label -> controller.commitProtractor(c, b, arc, label) }
         measure.onRuler = { a, b, label -> controller.commitRuler(a, b, label) }
         view.input = { ev ->
@@ -4794,6 +4793,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     // --- tools & colour ---
 
     fun selectTool(t: Tool) {
+        // Picking any other tool puts the ruler or protractor away, keeping what it measured.
+        if (t != tool) measure.switchTo(com.xnotes.core.measure.RulerMode.OFF)
         controller.setTool(t)
         tool = t
     }
@@ -5217,8 +5218,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     override fun bringToFront() = controller.bringToFront()
     override fun selectionStyles() = controller.selectionStyles()
 
-    override fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean) {
-        controller.restyleSelection(color, width, preview)
+    override fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean, dashed: Boolean?) {
+        controller.restyleSelection(color, width, preview, dashed)
         if (!preview) color?.let { settings = settings.rememberColor(it) }
     }
 

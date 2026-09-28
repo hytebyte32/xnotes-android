@@ -12,7 +12,7 @@ import androidx.compose.runtime.Composable
 /**
  * Marks the edge of a limited infinite canvas: a dim scrim over everything outside the extent and
  * a border line on it. Purely visual; the scroll clamp lives in [com.xnotes.core.infinite.CanvasViewport].
- * Draws nothing when both axes are infinite.
+ * The top and left edges always show, since the canvas starts there.
  */
 @Composable
 fun CanvasLimitsOverlay(editor: InfiniteEditor) {
@@ -21,17 +21,16 @@ fun CanvasLimitsOverlay(editor: InfiniteEditor) {
     val doc = editor.document
     val w = doc.limitW
     val h = doc.limitH
-    if (w == null && h == null) return
     val vp = editor.viewport
     Canvas(Modifier.fillMaxSize()) {
         val z = vp.zoom.toFloat()
         val vw = size.width
         val vh = size.height
         // The extent in viewport px; an infinite axis runs past both viewport edges.
-        val left = if (w != null) ((0.0 - vp.scrollX) * z).toFloat() else -1e6f
-        val right = if (w != null) ((w - vp.scrollX) * z).toFloat() else 1e6f
-        val top = if (h != null) ((0.0 - vp.scrollY) * z).toFloat() else -1e6f
-        val bottom = if (h != null) ((h - vp.scrollY) * z).toFloat() else 1e6f
+        val left = ((doc.originX - vp.scrollX) * z).toFloat()
+        val right = if (w != null) ((doc.originX + w - vp.scrollX) * z).toFloat() else 1e6f
+        val top = ((doc.originY - vp.scrollY) * z).toFloat()
+        val bottom = if (h != null) ((doc.originY + h - vp.scrollY) * z).toFloat() else 1e6f
         val scrim = Color(0x59000000)
         // Four bands around the extent, clipped to the viewport.
         fun band(x0: Float, y0: Float, x1: Float, y1: Float) {
@@ -47,13 +46,14 @@ fun CanvasLimitsOverlay(editor: InfiniteEditor) {
         band(right, top, vw, bottom) // right
         val line = Color(0xCC888888)
         val sw = Stroke(width = 2f)
-        if (w != null) {
-            drawLine(line, Offset(left, top.coerceIn(0f, vh)), Offset(left, bottom.coerceIn(0f, vh)), sw.width)
-            drawLine(line, Offset(right, top.coerceIn(0f, vh)), Offset(right, bottom.coerceIn(0f, vh)), sw.width)
-        }
-        if (h != null) {
-            drawLine(line, Offset(left.coerceIn(0f, vw), top), Offset(right.coerceIn(0f, vw), top), sw.width)
-            drawLine(line, Offset(left.coerceIn(0f, vw), bottom), Offset(right.coerceIn(0f, vw), bottom), sw.width)
-        }
+        // The top and left edges always exist; the far edges only on a limited axis.
+        val yLo = top.coerceIn(0f, vh)
+        val yHi = bottom.coerceIn(0f, vh)
+        val xLo = left.coerceIn(0f, vw)
+        val xHi = right.coerceIn(0f, vw)
+        drawLine(line, Offset(left, yLo), Offset(left, yHi), sw.width)
+        drawLine(line, Offset(xLo, top), Offset(xHi, top), sw.width)
+        if (w != null) drawLine(line, Offset(right, yLo), Offset(right, yHi), sw.width)
+        if (h != null) drawLine(line, Offset(xLo, bottom), Offset(xHi, bottom), sw.width)
     }
 }

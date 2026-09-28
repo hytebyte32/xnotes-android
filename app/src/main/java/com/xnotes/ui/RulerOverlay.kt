@@ -82,7 +82,7 @@ fun RulerOverlay(measure: MeasureController) {
             val hint = when (phase) {
                 Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> "Press the centre and drag out the baseline"
                 Protractor.Phase.AWAIT_ARC -> "Now draw the arc from the baseline  \u2022  tap here to start over"
-                Protractor.Phase.ARC -> ""
+                Protractor.Phase.ARC -> "New protractor  \u2022  or drag to redraw the arc"
             }
             if (hint.isNotEmpty()) {
                 Box(
@@ -90,7 +90,7 @@ fun RulerOverlay(measure: MeasureController) {
                         .align(Alignment.BottomCenter)
                         .padding(bottom = 18.dp)
                         .background(Color(0xE6FFFFFF), RoundedCornerShape(18.dp))
-                        .then(if (phase == Protractor.Phase.AWAIT_ARC) Modifier.clickable { measure.newProtractor() } else Modifier)
+                        .then(if (phase != Protractor.Phase.IDLE && phase != Protractor.Phase.BASELINE) Modifier.clickable { measure.newProtractor() } else Modifier)
                         .padding(horizontal = 14.dp, vertical = 8.dp),
                 ) {
                     Text(hint, color = Color(0xFF222222), fontSize = 13.sp)
@@ -255,6 +255,8 @@ private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint
     val nc = drawContext.canvas.nativeCanvas
     val edgeW = 1.6f * density
     val hr = 9f * density
+    val co = c.o()
+    val dots = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(2f * density, 5f * density))
 
     var wedge: List<Pt>? = null
     if (p.phase == Protractor.Phase.ARC) {
@@ -273,7 +275,7 @@ private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint
         }
         drawPath(arcPath, HALO, style = androidx.compose.ui.graphics.drawscope.Stroke(edgeW + 3f * density))
         drawPath(arcPath, BAND_EDGE, style = androidx.compose.ui.graphics.drawscope.Stroke(edgeW))
-        drawLine(BAND_EDGE, c.o(), pts.last().o(), strokeWidth = edgeW)
+        drawLine(BAND_EDGE, c.o(), pts.last().o(), strokeWidth = edgeW, pathEffect = dots)
 
         // Degree graduations inward from the arc: every degree the size allows, every ten longer.
         val radiusV = p.radius * m.zoom
@@ -299,14 +301,16 @@ private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint
 
     // The baseline, drawn as a strip edge would be, with handles on both ends.
     drawLine(HALO, c.o(), b.o(), strokeWidth = edgeW + 3f * density)
-    drawLine(BAND_EDGE, c.o(), b.o(), strokeWidth = edgeW)
+    drawLine(BAND_EDGE, c.o(), b.o(), strokeWidth = edgeW, pathEffect = dots)
     drawCircle(HALO, hr, b.o())
     drawCircle(BAND_EDGE, hr, b.o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.6f * density))
-    val dv = Pt(b.x - c.x, b.y - c.y)
-    val len = dv.length()
-    if (len > 1e-6) {
-        val u = Pt(dv.x / len, dv.y / len)
-        crosshair(c.o(), u.o(), u.perp().o(), 10f * density, density, BAND_TICK)
+    // The origin, marked with an X.
+    val xa = 8f * density
+    for (s in listOf(1f, -1f)) {
+        val p1 = Offset(co.x - xa, co.y - xa * s)
+        val p2 = Offset(co.x + xa, co.y + xa * s)
+        drawLine(HALO, p1, p2, strokeWidth = 3.6f * density)
+        drawLine(BAND_TICK, p1, p2, strokeWidth = 1.6f * density)
     }
 
     if (wedge != null) {

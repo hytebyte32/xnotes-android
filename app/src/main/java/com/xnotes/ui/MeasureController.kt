@@ -69,8 +69,9 @@ class MeasureController(
     fun toViewportPt(p: Pt): Pt = toViewport(p)
 
     fun switchTo(next: RulerMode) {
-        // Leaving the ruler keeps its last reading on the canvas.
+        // Leaving a tool keeps its last reading on the canvas; nothing is drawn until then.
         if (mode == RulerMode.TWO_POINT && next != RulerMode.TWO_POINT) keepRuler()
+        if (mode == RulerMode.PROTRACTOR && next != RulerMode.PROTRACTOR) keepProtractor()
         mode = next
         if (next != RulerMode.PROTRACTOR) protractor.reset()
         active = Active.NONE
@@ -87,9 +88,9 @@ class MeasureController(
         switchTo(if (mode == RulerMode.PROTRACTOR) RulerMode.OFF else RulerMode.PROTRACTOR)
     }
 
-    /** Drop the protractor in progress so the next press sets a new centre. */
+    /** Keep the protractor as it stands and clear it, so the next press sets a new centre. */
     fun newProtractor() {
-        protractor.reset()
+        keepProtractor()
         active = Active.NONE
         rev++
     }
@@ -193,10 +194,15 @@ class MeasureController(
         return true
     }
 
-    /** The pen came up: a real sweep is kept as a baseline, a clean arc and its reading; a sliver is dropped. */
+    /** The pen came up: a sliver is dropped; a real sweep stays on screen, adjustable, until the tool is left. */
     private fun finishArc() {
-        if (protractor.angleDegrees() < MIN_ARC_DEG) {
-            protractor.cancelArc()
+        if (protractor.angleDegrees() < MIN_ARC_DEG) protractor.cancelArc()
+    }
+
+    /** Hand the finished protractor to the canvas to keep as shapes and a reading, then clear it. */
+    private fun keepProtractor() {
+        if (protractor.phase != Protractor.Phase.ARC || protractor.angleDegrees() < MIN_ARC_DEG) {
+            protractor.reset()
             return
         }
         val c = protractor.centre

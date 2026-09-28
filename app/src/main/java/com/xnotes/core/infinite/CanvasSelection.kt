@@ -140,7 +140,8 @@ class CanvasSelection(private val doc: InfiniteDocument) {
     }
 
     /** The rotate grip's centre, [arm] content pixels past the box's top edge. */
-    fun rotateGrip(arm: Double): Pt? = box?.let { ResizeMath.obbRotateGrip(it, arm) }
+    fun rotateGrip(arm: Double): Pt? =
+        if (pointShape != null) null else box?.let { ResizeMath.obbRotateGrip(it, arm) }
 
     /** Which handle [p] lands on, within [tolerance] content pixels, or null. */
     fun hitHandle(p: Pt, tolerance: Double): HandleId? =

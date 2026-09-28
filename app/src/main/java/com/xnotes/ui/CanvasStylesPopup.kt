@@ -133,7 +133,7 @@ fun CanvasStylesPopup(editor: InfiniteEditor, onDismiss: () -> Unit) {
             }
 
             Spacer(Modifier.size(12.dp))
-            StyleCaption("Canvas size")
+            StyleCaption("Canvas size (both sides fixed)")
             val dpi = editor.document.dpi
             fun cmOf(px: Double) = PageSize.pxToMm(px, dpi) / 10.0
             fun pxOf(cm: Double) = PageSize.mmToPx(cm * 10.0, dpi)
@@ -156,6 +156,30 @@ fun CanvasStylesPopup(editor: InfiniteEditor, onDismiss: () -> Unit) {
                 ModeChip("A4 landscape", false) {
                     val (pw, ph) = PageSize.A4.pixels(Orientation.LANDSCAPE, dpi)
                     setLimits(pw, ph)
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+            StyleCaption("Page width, endless height")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                for (preset in listOf(PageSize.A4, PageSize.A5, PageSize.LETTER, PageSize.SLIDE_16_9)) {
+                    ModeChip(preset.displayName, false) {
+                        setLimits(preset.pixels(Orientation.PORTRAIT, dpi).first, null)
+                    }
+                }
+            }
+            Spacer(Modifier.size(6.dp))
+            StyleCaption("Page height, endless width")
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                for (preset in listOf(PageSize.A4, PageSize.A5, PageSize.LETTER, PageSize.SLIDE_16_9)) {
+                    ModeChip(preset.displayName, false) {
+                        setLimits(null, preset.pixels(Orientation.LANDSCAPE, dpi).second)
+                    }
                 }
             }
             Spacer(Modifier.size(6.dp))

@@ -107,6 +107,9 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         // Additive: written only for a limited axis, so an infinite canvas's bytes are unchanged.
         doc.limitW?.let { j.name("limit_w").value(it) }
         doc.limitH?.let { j.name("limit_h").value(it) }
+        // The canvas's top-left, written only when it is not the content origin.
+        if (doc.originX != 0.0) j.name("origin_x").value(doc.originX)
+        if (doc.originY != 0.0) j.name("origin_y").value(doc.originY)
         writeBackground(j, doc.background)
         // The last view and the waypoints are written only when there is something to say.
         doc.lastView?.let {
@@ -336,6 +339,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         doc.background = m.background
         doc.limitW = m.limitW
         doc.limitH = m.limitH
+        doc.originX = m.originX
+        doc.originY = m.originY
         doc.lastView = m.view
         doc.waypoints.addAll(m.waypoints)
 
@@ -349,6 +354,14 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
             if (item == null) dropped++ else items.add(spec.index - dropped, item)
         }
         doc.addAll(items)
+        // A canvas from before it had a fixed top-left keeps everything reachable: the corner goes
+        // just up and left of whatever was drawn furthest that way.
+        if (!m.originSeen) {
+            doc.contentBounds()?.let { b ->
+                if (b.left < 0.0) doc.originX = b.left - LEGACY_MARGIN
+                if (b.top < 0.0) doc.originY = b.top - LEGACY_MARGIN
+            }
+        }
         return doc
     }
 
@@ -397,6 +410,9 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         var dpi = PageSize.DEFAULT_DPI
         var limitW: Double? = null
         var limitH: Double? = null
+        var originX = 0.0
+        var originY = 0.0
+        var originSeen = false
         var background = CanvasBackground()
         var view: Waypoint? = null
         val waypoints = ArrayList<Waypoint>()
@@ -430,6 +446,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                 "dpi" -> m.dpi = intOr(p, PageSize.DEFAULT_DPI)
                 "limit_w" -> m.limitW = doubleOrNull(p)?.takeIf { it.isFinite() && it > 0.0 }
                 "limit_h" -> m.limitH = doubleOrNull(p)?.takeIf { it.isFinite() && it > 0.0 }
+                "origin_x" -> { m.originX = doubleOr(p, 0.0); m.originSeen = true }
+                "origin_y" -> { m.originY = doubleOr(p, 0.0); m.originSeen = true }
                 "background" -> m.background = parseBackground(p)
                 "view" -> m.view = parseWaypoint(p, named = false)
                 "waypoints" -> parseWaypoints(p, m.waypoints)
@@ -865,6 +883,9 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         private val DEFAULT_SHAPE_STROKE = Rgba(0, 230, 118, 255)
 
         private const val NOT_XCANVAS = "Not an xnotes canvas"
+
+        /** Content px left between an old canvas's furthest ink and its new top-left corner. */
+        private const val LEGACY_MARGIN = 150.0
     }
 }
 

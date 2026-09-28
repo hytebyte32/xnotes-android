@@ -70,14 +70,18 @@ class CanvasViewport {
 
     // --- axis limits ---
 
-    /** Extent of a limited axis in content px (spanning 0..limit), or null when that axis is infinite. */
+    /** Top-left of the canvas in content px; the view never goes far past it. */
+    var originX: Double = 0.0
+    var originY: Double = 0.0
+
+    /** Extent of a limited axis in content px (from the origin), or null when that axis runs on forever. */
     var limitW: Double? = null
     var limitH: Double? = null
 
-    /** Keep the scroll inside the soft edge of any limited axis. */
+    /** Keep the scroll inside the canvas: a soft edge past the top and left, and past the far side of a limited axis. */
     fun clampToLimits() {
-        limitW?.let { scrollX = clampAxis(scrollX, it, widthPx / zoom) }
-        limitH?.let { scrollY = clampAxis(scrollY, it, heightPx / zoom) }
+        scrollX = clampAxis(scrollX, originX, limitW, widthPx / zoom)
+        scrollY = clampAxis(scrollY, originY, limitH, heightPx / zoom)
     }
 
     // --- movement ---
@@ -159,12 +163,13 @@ class CanvasViewport {
 
         /**
          * Scroll [s] for an axis of extent 0..[limit] showing [span] content px: free within the
-         * extent plus a soft margin either side, centred when the view is wider than all of that.
+         * extent plus a soft margin either side (an endless axis has only the start), centred when the view is wider than all of that.
          */
-        fun clampAxis(s: Double, limit: Double, span: Double): Double {
+        fun clampAxis(s: Double, origin: Double, limit: Double?, span: Double): Double {
             val pad = SOFT_EDGE * span
-            val lo = -pad
-            val hi = limit + pad - span
+            val lo = origin - pad
+            if (limit == null) return if (s < lo) lo else s
+            val hi = origin + limit + pad - span
             return if (lo > hi) (lo + hi) / 2.0 else s.coerceIn(lo, hi)
         }
 

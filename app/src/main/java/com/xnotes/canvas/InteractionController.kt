@@ -255,8 +255,6 @@ class InteractionController(
     var measureMove: (Pt) -> Unit = {}
     var measureUp: () -> Unit = {}
 
-    /** True while a measuring tool (two-point ruler / protractor) is up; lets the eraser take whole text boxes. */
-    var measureActive: () -> Boolean = { false }
 
 
     // MAGIC WAND (ephemeral "disappearing ink"; no model/undo/cache/save state)
@@ -1099,15 +1097,12 @@ class InteractionController(
         requestRender()
     }
 
-    /** STROKE mode: remove every stroke/shape the eraser circle touches. Images and text boxes are
-     *  deliberately-placed and protected (delete those via select + delete), except text boxes while
-     *  [measureActive]. Returns the repaint
+    /** STROKE mode: remove every stroke/shape the eraser circle touches.  Images are deliberately placed and protected
+     *  (delete those via select + delete); text boxes erase whole like ink. Returns the repaint
      *  region, or null if nothing changed. */
     private fun eraseStrokesFromPage(page: Page, cx: Double, cy: Double, radius: Double): Rect? {
-        // While a measuring tool is up, a text box (e.g. a placed measurement label) is erasable whole.
-        val textErasable = measureActive()
         val toRemove = page.items.filter {
-            !it.locked && it !is ImageItem && (it !is TextItem || textErasable) && it.intersectsCircle(cx, cy, radius)
+            !it.locked && it !is ImageItem && it.intersectsCircle(cx, cy, radius)
         }
         if (toRemove.isEmpty()) return null
         var dirty: Rect? = null
@@ -1121,13 +1116,11 @@ class InteractionController(
     }
 
     /** AREA mode: replace each touched stroke or shape with the fragments that survive the eraser
-     *  circle, spliced in at the original's z-position. Images are left untouched, and so is text,
-     *  except that while [measureActive] a touched text box is removed whole. Returns the repaint
+     *  circle, spliced in at the original's z-position. Images are left untouched; a touched text box is removed whole. Returns the repaint
      *  region, or null if nothing changed. */
     private fun eraseAreaFromPage(page: Page, cx: Double, cy: Double, radius: Double): Rect? {
         var dirty: Rect? = null
         var i = 0
-        val textErasable = measureActive()
         while (i < page.items.size) {
             val item = page.items[i]
             val frags: List<CanvasItem>? = if (item.locked) {
@@ -1137,7 +1130,7 @@ class InteractionController(
                     is Stroke -> item.erasedBy(cx, cy, radius)
                     is ShapeItem -> item.erasedBy(cx, cy, radius)
                     // Whole-item removal (no fragments); the page snapshot below makes it one undo step.
-                    is TextItem -> if (textErasable && item.intersectsCircle(cx, cy, radius)) emptyList() else null
+                    is TextItem -> if (item.intersectsCircle(cx, cy, radius)) emptyList() else null
                     else -> null
                 }
             }
@@ -1626,11 +1619,9 @@ class InteractionController(
     /** Keep a finished protractor: its baseline, its arc and a text box with the reading. */
     fun commitProtractor(centre: Pt, baseEnd: Pt, arc: List<Pt>, label: com.xnotes.ui.MeasureLabel) {
         commitMeasurement(centre) { local, w ->
-            listOf(
-                ShapeItem(ShapeKind.LINE, local(centre), local(baseEnd), inkColor, w),
-                ShapeItem.poly(ShapeKind.POLYLINE, arc.map { local(it) }, inkColor, w),
-                measurementText(label, local),
-            )
+            com.xnotes.core.measure.MeasureShapes.protractor(
+                local(centre), local(baseEnd), arc.map { local(it) }, inkColor, w, label.heightPx * 0.35,
+            ) + measurementText(label, local)
         }
     }
 
@@ -2258,16 +2249,16 @@ class InteractionController(
      * off does nothing but close a pending preview, which is how a dismissed popup settles up.
      * No cache repair is needed: a selected item is lifted, so it is drawn live rather than baked.
      */
-    fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean = false) {
+    fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean = false, dashed: Boolean? = null) {
         if (selection.isEmpty()) return
         val baseline = restyleBaseline ?: HashMap<CanvasItem, DrawStyle>().also { map ->
             for (s in selection) DrawStyle.of(s.item)?.let { map[s.item] = it }
         }
         restyleBaseline = if (preview) baseline else null
-        if (color != null || width != null) {
+        if (color != null || width != null || dashed != null) {
             for (s in selection) {
                 val current = DrawStyle.of(s.item) ?: continue
-                DrawStyle(color ?: current.color, width ?: current.width).applyTo(s.item)
+                DrawStyle(color ?: current.color, width ?: current.width, current.dashed?.let { dashed ?: it }).applyTo(s.item)
             }
         }
         if (!preview) {
@@ -2902,7 +2893,8 @@ class InteractionController(
                 mode == PointerMode.TEXT_DRAG -> textDragRect?.let { r.strokeRect(it, accent) }
                 mode == PointerMode.LASSO_DRAW && lassoPoints.size >= 2 ->
                     r.strokePolyline(lassoPoints, chromePen(1.3))
-                selection.isNotEmpty() ->
+                // A shape edited by its own points shows just those points, never a box around it.
+                selection.isNotEmpty() && singlePointShape() == null ->
                     selObb?.let { obb ->
                         r.strokePolygon(obb.corners().map { Pt(it.x + moveOffset.x, it.y + moveOffset.y) }, accent)
                     }
@@ -2917,7 +2909,9 @@ class InteractionController(
                         val base = ResizeMath.obbTopMid(obb)
                         val stemTop = Pt(base.x + moveOffset.x, base.y + moveOffset.y)
                         val grip = Pt(rp.x + moveOffset.x, rp.y + moveOffset.y)
-                        r.strokePolyline(listOf(grip, stemTop), Pen(state.palette.accent, 1.3, cosmetic = true))
+                        if (singlePointShape() == null) {
+                            r.strokePolyline(listOf(grip, stemTop), Pen(state.palette.accent, 1.3, cosmetic = true))
+                        }
                         r.fillCircle(grip, side * 0.6, state.palette.accent)
                     }
                 }

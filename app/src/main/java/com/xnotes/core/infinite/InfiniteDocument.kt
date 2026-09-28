@@ -78,6 +78,10 @@ class InfiniteDocument(
     var limitW: Double? = null
     var limitH: Double? = null
 
+    /** The canvas's top-left corner in content px: nothing scrolls past it, so the canvas has a defined start. */
+    var originX: Double = 0.0
+    var originY: Double = 0.0
+
     var listener: Listener? = null
 
     private val backing = ArrayList<CanvasItem>()
@@ -117,6 +121,8 @@ class InfiniteDocument(
         val copy = InfiniteDocument(dpi, path, displayName, dirty, background, waypoints.toMutableList(), lastView, created)
         copy.limitW = limitW
         copy.limitH = limitH
+        copy.originX = originX
+        copy.originY = originY
         copy.backing.addAll(backing)
         return copy
     }

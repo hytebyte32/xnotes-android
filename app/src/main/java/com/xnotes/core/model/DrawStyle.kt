@@ -7,7 +7,12 @@ package com.xnotes.core.model
  * Only items that actually carry both have a style: images have neither, and a text box owns its
  * own typography (see [TextStyle]) rather than a stroke width.
  */
-data class DrawStyle(val color: Rgba, val width: Double) {
+data class DrawStyle(
+    val color: Rgba,
+    val width: Double,
+    /** Solid (false) or dotted (true) for a shape; null for an item that has no such choice. */
+    val dashed: Boolean? = null,
+) {
 
     fun applyTo(item: CanvasItem) {
         when (item) {
@@ -20,6 +25,14 @@ data class DrawStyle(val color: Rgba, val width: Double) {
                 item.fillRgba = item.fillRgba?.let { color.copy(a = it.a) }
                 item.strokeRgba = color
                 item.strokeWidth = width
+                dashed?.let { on ->
+                    if (on && !item.dashed) {
+                        // Turning dots on: short dashes with room between, in proportion to the line.
+                        item.dashLength = width * DOT_LENGTH_FACTOR
+                        item.dashGap = width * DOT_GAP_FACTOR
+                    }
+                    item.dashed = on
+                }
             }
             else -> Unit
         }
@@ -29,11 +42,15 @@ data class DrawStyle(val color: Rgba, val width: Double) {
         /** [item]'s current style, or null when it has no colour and width to change. */
         fun of(item: CanvasItem): DrawStyle? = when (item) {
             is Stroke -> DrawStyle(item.config.rgba, item.config.baseWidth)
-            is ShapeItem -> DrawStyle(item.strokeRgba, item.strokeWidth)
+            is ShapeItem -> DrawStyle(item.strokeRgba, item.strokeWidth, item.dashed)
             else -> null
         }
 
         /** Settable width range for a restyle, wide enough to span every drawing tool's own range. */
+        /** Dot length and gap as multiples of the line width. */
+        const val DOT_LENGTH_FACTOR = 1.0
+        const val DOT_GAP_FACTOR = 2.2
+
         const val MIN_WIDTH = 1.0
         const val MAX_WIDTH = 80.0
     }
