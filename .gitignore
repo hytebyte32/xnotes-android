@@ -25,3 +25,6 @@ keystore.properties
 # --- Misc ---
 .DS_Store
 *.log
+
+# Fixed debug key so every CI build installs over the last one and keeps app data.
+!app/xnotes-debug.keystore

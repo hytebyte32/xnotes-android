@@ -54,6 +54,14 @@ android {
     }
 
     signingConfigs {
+        // One committed debug key, so each CI build installs over the previous one and keeps the
+        // app's data and settings instead of forcing an uninstall.
+        getByName("debug") {
+            storeFile = rootProject.file("app/xnotes-debug.keystore")
+            storePassword = "android"
+            keyAlias = "xnotesdebug"
+            keyPassword = "android"
+        }
         if (hasReleaseSigning) {
             create("release") {
                 storeFile = file(keystoreProperties.getProperty("storeFile"))
