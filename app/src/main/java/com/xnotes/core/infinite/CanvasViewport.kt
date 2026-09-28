@@ -22,6 +22,8 @@ class CanvasViewport {
     var zoom: Double = 1.0
         set(value) {
             field = value.coerceIn(minZoom, maxZoom)
+            // Zooming moves what the top-left corner shows, so the view is put back inside the canvas at once.
+            clampToLimits()
         }
 
     /** Content coordinate at the viewport's left edge. */
@@ -158,8 +160,8 @@ class CanvasViewport {
     }
 
     companion object {
-        /** How far past a limited edge you can scroll, as a share of the visible span. */
-        const val SOFT_EDGE = 0.25
+        /** How far past the canvas edge you can scroll, as a share of the visible span: none, so it behaves like a page. */
+        const val SOFT_EDGE = 0.0
 
         /**
          * Scroll [s] for an axis of extent 0..[limit] showing [span] content px: free within the
