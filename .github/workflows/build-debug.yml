@@ -23,7 +23,11 @@ jobs:
       - name: Install NDK and CMake
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
+          for attempt in 1 2 3; do
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1" && break
+            echo "sdkmanager attempt $attempt failed"; sleep 10
+            [ $attempt -eq 3 ] && exit 1
+          done
 
       - name: Assemble debug APK
         shell: bash
@@ -36,7 +40,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E "^e: " build.log | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
+          [ -f build.log ] && grep -E "^e: " build.log | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
