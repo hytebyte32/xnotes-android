@@ -256,6 +256,12 @@ fun PreferencesPane(
             HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle(stringResource(R.string.pref_measuring))
             CheckRow(stringResource(R.string.pref_use_inches), prefs.useInches) { update(prefs.copy(useInches = it)) }
+            FieldLabel(stringResource(R.string.pref_protractor_decimals))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (n in 0..2) {
+                    Chip(n.toString(), prefs.protractorDecimals == n) { update(prefs.copy(protractorDecimals = n)) }
+                }
+            }
             val measuredPxPerCm = editor.screenPxPerCm()
             Text(
                 stringResource(

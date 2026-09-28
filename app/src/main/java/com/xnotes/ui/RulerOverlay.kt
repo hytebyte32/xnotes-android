@@ -29,6 +29,7 @@ import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.measure.CM_PER_INCH
 import com.xnotes.core.measure.Measure
+import com.xnotes.core.measure.Protractor
 import com.xnotes.core.measure.RulerMode
 import kotlin.math.abs
 import kotlin.math.ceil
@@ -57,6 +58,7 @@ fun RulerOverlay(measure: MeasureController) {
             when (mode) {
                 RulerMode.BAND -> drawBand(measure, density, paint)
                 RulerMode.TWO_POINT -> drawPointRuler(measure, density, paint)
+                RulerMode.PROTRACTOR -> drawProtractor(measure, density, paint)
                 RulerMode.OFF -> Unit
             }
         }
@@ -75,6 +77,26 @@ fun RulerOverlay(measure: MeasureController) {
                     color = Color(0xFF222222),
                     fontSize = 13.sp,
                 )
+            }
+        }
+        if (mode == RulerMode.PROTRACTOR) {
+            val phase = measure.protractor.phase
+            val hint = when (phase) {
+                Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> "Press the centre and drag out the baseline"
+                Protractor.Phase.AWAIT_ARC -> "Now draw the arc from the baseline  \u2022  tap here to start over"
+                Protractor.Phase.ARC -> ""
+            }
+            if (hint.isNotEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 18.dp)
+                        .background(Color(0xE6FFFFFF), RoundedCornerShape(18.dp))
+                        .then(if (phase == Protractor.Phase.AWAIT_ARC) Modifier.clickable { measure.newProtractor() } else Modifier)
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                ) {
+                    Text(hint, color = Color(0xFF222222), fontSize = 13.sp)
+                }
             }
         }
     }
@@ -299,3 +321,46 @@ private fun outlinedText(
 
 private fun trimmed(v: Double): String =
     if (v == floor(v)) v.toLong().toString() else "%.4f".format(v).trimEnd('0').trimEnd('.')
+
+private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint: Paint) {
+    val p = m.protractor
+    if (p.phase == Protractor.Phase.IDLE) return
+    val c = m.toViewportPt(p.centre)
+    val b = m.toViewportPt(p.baseEnd)
+    val co = Offset(c.x.toFloat(), c.y.toFloat())
+    val bo = Offset(b.x.toFloat(), b.y.toFloat())
+    // The baseline, with the centre marked.
+    drawLine(HALO, co, bo, strokeWidth = 5f * density)
+    drawLine(INK, co, bo, strokeWidth = 2f * density)
+    drawCircle(HALO, 6f * density, co)
+    drawCircle(INK, 4f * density, co)
+    drawCircle(HALO, 5f * density, bo)
+    drawCircle(INK, 3.5f * density, bo)
+    if (p.phase != Protractor.Phase.ARC) return
+
+    // The arc as it will be committed: clean, round, and as long as the sweep so far.
+    val pts = p.arcPoints().map { m.toViewportPt(it) }
+    val path = Path().apply {
+        moveTo(pts[0].x.toFloat(), pts[0].y.toFloat())
+        for (i in 1 until pts.size) lineTo(pts[i].x.toFloat(), pts[i].y.toFloat())
+    }
+    drawPath(path, HALO, style = androidx.compose.ui.graphics.drawscope.Stroke(5f * density))
+    drawPath(path, INK, style = androidx.compose.ui.graphics.drawscope.Stroke(2f * density))
+    // The radial line to the arc's far end, so the swept wedge reads.
+    val last = pts.last()
+    val lo = Offset(last.x.toFloat(), last.y.toFloat())
+    drawLine(INK, co, lo, strokeWidth = 1.2f * density)
+
+    // The angle, out past the middle of the arc.
+    val mid = pts[pts.size / 2]
+    val away = Pt(mid.x - c.x, mid.y - c.y)
+    val len = away.length()
+    if (len > 1e-6) {
+        val tx = (mid.x + away.x / len * 26.0 * density).toFloat()
+        val ty = (mid.y + away.y / len * 26.0 * density).toFloat()
+        paint.textSize = 17f * density
+        val nc = drawContext.canvas.nativeCanvas
+        val text = "%.${m.protractorDecimals}f°".format(p.angleDegrees())
+        outlinedText(nc, paint, text, tx, ty, density, INK)
+    }
+}

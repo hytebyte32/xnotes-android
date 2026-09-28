@@ -175,6 +175,8 @@
     <string name="pref_start_fullscreen">Start in fullscreen</string>
     <string name="pref_input">Input</string>
     <string name="pref_measuring">Measuring</string>
+    <string name="tool_protractor">Protractor</string>
+    <string name="pref_protractor_decimals">Protractor angle decimals</string>
     <string name="pref_use_inches">Show measurements in inches</string>
     <string name="pref_calibrate_screen">Calibrate screen…</string>
     <string name="pref_calibrate_reset">Use device density</string>

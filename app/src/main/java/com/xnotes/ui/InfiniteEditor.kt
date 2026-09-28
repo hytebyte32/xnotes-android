@@ -177,6 +177,16 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         density = appContext.resources.displayMetrics.density.toDouble(),
     )
 
+    init {
+        measure.onProtractor = { centre, baseEnd, arc ->
+            val ink = inkColor
+            val w = shapeConfig.strokeWidth * InteractionController.SHAPE_PEN_PARITY
+            val line = ShapeItem(com.xnotes.core.tools.ShapeKind.LINE, centre, baseEnd, ink, w)
+            val curve = ShapeItem.poly(com.xnotes.core.tools.ShapeKind.POLYLINE, arc, ink, w)
+            commitItems(listOf(line, curve))
+        }
+    }
+
     /** Whether the minimap is shown. */
     var minimapVisible by mutableStateOf(true)
         private set
@@ -1086,6 +1096,14 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     /** Add a finished item and record the edit, the common tail of every creating tool. */
+    /** Add several items as one undoable step, so a protractor (baseline and arc) undoes together. */
+    private fun commitItems(items: List<CanvasItem>) {
+        document.addAll(items)
+        history.push(AddCanvasItems(document, items))
+        markDirty()
+        refresh()
+    }
+
     private fun commitItem(item: CanvasItem) {
         committingWetStroke = true
         try {
@@ -1350,8 +1368,9 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     /** Screen pixels per real centimetre, for the 1:1 view. */
     private var screenPxPerCm = com.xnotes.core.measure.ScreenCalibration.pxPerCmFromDpi(160.0)
 
-    fun applyMeasurePrefs(inches: Boolean, pxPerCm: Double) {
+    fun applyMeasurePrefs(inches: Boolean, pxPerCm: Double, protractorDecimals: Int = 1) {
         measure.useInches = inches
+        measure.protractorDecimals = protractorDecimals
         if (pxPerCm > 0.0) screenPxPerCm = pxPerCm
         measure.viewChanged()
     }

@@ -660,7 +660,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         canvas.replaceDocument(doc)
         canvas.applyPalette(palette)
         canvas.applyInputPrefs(settings.prefs.fingerDraws, controller.penButtonTool, settings.prefs.zoomLockPan)
-        canvas.applyMeasurePrefs(settings.prefs.useInches, screenPxPerCm())
+        canvas.applyMeasurePrefs(settings.prefs.useInches, screenPxPerCm(), settings.prefs.protractorDecimals)
         canvas.applyZoomRange(settings.prefs.canvasMinZoomPercent, settings.prefs.canvasMaxZoomPercent)
         canvas.onContentChanged = { scheduleCanvasAutosave() }
         // Only a canvas living under the granted folder autosaves; anything else is left alone,
@@ -1101,6 +1101,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.measureDown = { p, finger -> measure.down(p, finger) }
         controller.measureMove = { measure.move(it) }
         controller.measureUp = { measure.up() }
+        measure.onProtractor = { c, b, arc -> controller.commitProtractor(c, b, arc) }
         view.input = { ev ->
             // Any fresh canvas touch quietly retires the flow action bar and still does its job.
             if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {
@@ -1803,7 +1804,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER),
             p.zoomLockPan,
         )
-        infiniteOrNull?.applyMeasurePrefs(p.useInches, com.xnotes.core.measure.ScreenCalibration.resolve(p.screenPxPerCm, appContext.resources.displayMetrics.xdpi.toDouble()))
+        infiniteOrNull?.applyMeasurePrefs(p.useInches, com.xnotes.core.measure.ScreenCalibration.resolve(p.screenPxPerCm, appContext.resources.displayMetrics.xdpi.toDouble()), p.protractorDecimals)
         infiniteOrNull?.applyZoomRange(p.canvasMinZoomPercent, p.canvasMaxZoomPercent)
         // Both surfaces' pads: the switch is about the device, not about one of them.
         pad.frontBuffering = !p.disableFrontBuffering
@@ -1822,6 +1823,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.detectShapes = p.detectShapes
         controller.useInches = p.useInches
         measure.useInches = p.useInches
+        measure.protractorDecimals = p.protractorDecimals
         flowText.markdownInput = p.markdownInput
         flowText.slashCommands = p.slashCommands
         controller.penButtonTool = if (p.penButtonTool == "none") null else (Tool.fromId(p.penButtonTool) ?: Tool.ERASER)
@@ -4972,6 +4974,16 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         state.zoomLocked = zoomLocked
     }
 
+    /** The protractor on or off; it and the band never show together. */
+    fun toggleProtractor() {
+        if (controller.rulerVisible()) {
+            controller.toggleRuler()
+            rulerVisible = false
+        }
+        measure.toggleProtractor()
+        view.requestRender()
+    }
+
     /** Cycle the ruler: off, the band, the two-point line, off. */
     fun toggleRuler() {
         when {
@@ -4981,7 +4993,10 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             }
             measure.mode == com.xnotes.core.measure.RulerMode.TWO_POINT ->
                 measure.setMode(com.xnotes.core.measure.RulerMode.OFF)
-            else -> controller.toggleRuler()
+            else -> {
+                measure.setMode(com.xnotes.core.measure.RulerMode.OFF)
+                controller.toggleRuler()
+            }
         }
         rulerVisible = controller.rulerVisible() || measure.mode != com.xnotes.core.measure.RulerMode.OFF
         view.requestRender()

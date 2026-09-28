@@ -124,6 +124,12 @@ fun InfiniteToolbar(
                         active = editor.measure.mode != RulerMode.OFF,
                     ) { editor.measure.cycle() }
 
+                    ToolbarItem.PROTRACTOR -> ToolbarIcon(
+                        XnotesIcons.protractor,
+                        stringResource(R.string.tool_protractor),
+                        active = editor.measure.mode == RulerMode.PROTRACTOR,
+                    ) { editor.measure.toggleProtractor() }
+
                     ToolbarItem.IMAGE -> ToolbarIcon(XnotesIcons.image, stringResource(R.string.insert_image)) { onInsertImage() }
 
                     ToolbarItem.COLORS ->

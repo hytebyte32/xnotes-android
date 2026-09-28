@@ -27,6 +27,7 @@ enum class ToolbarItem(val id: String) {
     WAND("wand"),
     SHAPE("shape"),
     RULER("ruler"),
+    PROTRACTOR("protractor"),
     TEXT("text"),
     TEXT_BOX("text_box"),
     IMAGE("image"),
@@ -150,6 +151,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.MARGINS to ToolbarItem.STYLES,
             ToolbarItem.WAND to ToolbarItem.LASSO,
             ToolbarItem.RULER to ToolbarItem.SHAPE,
+            ToolbarItem.PROTRACTOR to ToolbarItem.RULER,
         )
 
         /**
@@ -163,7 +165,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.PEN, ToolbarItem.DASHED, ToolbarItem.CALLIGRAPHY, ToolbarItem.SPEED,
             ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER,
             ToolbarItem.PAN, ToolbarItem.SELECT, ToolbarItem.LASSO, ToolbarItem.WAND,
-            ToolbarItem.SHAPE, ToolbarItem.RULER,
+            ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.PROTRACTOR,
             ToolbarItem.IMAGE, ToolbarItem.COLORS, ToolbarItem.UNDO, ToolbarItem.REDO,
             ToolbarItem.STYLES, ToolbarItem.WAYPOINTS, ToolbarItem.MINIMAP,
             ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK,
@@ -182,7 +184,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
                 ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER,
             ),
             listOf(ToolbarItem.PAN, ToolbarItem.SELECT, ToolbarItem.LASSO, ToolbarItem.SCREENSHOT),
-            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.TEXT, ToolbarItem.TEXT_BOX),
+            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.PROTRACTOR, ToolbarItem.TEXT, ToolbarItem.TEXT_BOX),
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
             listOf(ToolbarItem.UNDO, ToolbarItem.REDO),
@@ -199,7 +201,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
                 ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER,
             ),
             listOf(ToolbarItem.PAN, ToolbarItem.SELECT, ToolbarItem.LASSO),
-            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER),
+            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.PROTRACTOR),
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
             listOf(ToolbarItem.UNDO, ToolbarItem.REDO),

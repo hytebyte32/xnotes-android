@@ -200,6 +200,12 @@ private fun ToolbarItemView(
             ToolbarIcon(XnotesIcons.magicWand, stringResource(R.string.tool_wand), active = editor.wandEnabled) { editor.toggleWand() }
         ToolbarItem.RULER ->
             ToolbarIcon(XnotesIcons.ruler, stringResource(R.string.tool_ruler), active = editor.rulerVisible) { editor.toggleRuler() }
+        ToolbarItem.PROTRACTOR ->
+            ToolbarIcon(
+                XnotesIcons.protractor,
+                stringResource(R.string.tool_protractor),
+                active = editor.measure.mode == com.xnotes.core.measure.RulerMode.PROTRACTOR,
+            ) { editor.toggleProtractor() }
 
         ToolbarItem.IMAGE -> ImageMenu(editor, onInsertImage, onAddStickers)
 

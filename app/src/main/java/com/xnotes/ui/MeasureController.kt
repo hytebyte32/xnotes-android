@@ -9,6 +9,7 @@ import com.xnotes.canvas.RulerButton
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.measure.PointRuler
 import com.xnotes.core.measure.PointRulerPart
+import com.xnotes.core.measure.Protractor
 import com.xnotes.core.measure.RulerMode
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -35,6 +36,13 @@ class MeasureController(
 ) {
     val point = PointRuler()
     val band = Ruler()
+    val protractor = Protractor()
+
+    /** Decimal places on the protractor readout. */
+    var protractorDecimals by mutableStateOf(1)
+
+    /** A finished protractor: centre, baseline end and the clean arc, all in content space. */
+    var onProtractor: (com.xnotes.core.geometry.Pt, com.xnotes.core.geometry.Pt, List<com.xnotes.core.geometry.Pt>) -> Unit = { _, _, _ -> }
 
     var mode by mutableStateOf(RulerMode.OFF)
         private set
@@ -57,6 +65,7 @@ class MeasureController(
             val (w, h) = viewportSize()
             band.placeDefault(w, h, density)
         }
+        if (next != RulerMode.PROTRACTOR) protractor.reset()
         active = Active.NONE
         rev++
     }
@@ -68,8 +77,21 @@ class MeasureController(
                 RulerMode.OFF -> RulerMode.BAND
                 RulerMode.BAND -> RulerMode.TWO_POINT
                 RulerMode.TWO_POINT -> RulerMode.OFF
+                RulerMode.PROTRACTOR -> RulerMode.BAND
             },
         )
+    }
+
+    /** The protractor on, or off if it already is. */
+    fun toggleProtractor() {
+        setMode(if (mode == RulerMode.PROTRACTOR) RulerMode.OFF else RulerMode.PROTRACTOR)
+    }
+
+    /** Drop the protractor in progress so the next press sets a new centre. */
+    fun newProtractor() {
+        protractor.reset()
+        active = Active.NONE
+        rev++
     }
 
     /** Throw the two-point line away so the next press places a new one. */
@@ -91,7 +113,7 @@ class MeasureController(
 
     // --- touch ---
 
-    private enum class Active { NONE, PLACING, POINT_PART, BAND_MOVE, BAND_ROTATE }
+    private enum class Active { NONE, PLACING, POINT_PART, BAND_MOVE, BAND_ROTATE, PROT_BASE, PROT_ARC }
 
     private var active = Active.NONE
     private var part: PointRulerPart? = null
@@ -106,6 +128,7 @@ class MeasureController(
         RulerMode.OFF -> false
         RulerMode.TWO_POINT -> pointDown(vp, finger)
         RulerMode.BAND -> bandDown(vp, finger)
+        RulerMode.PROTRACTOR -> protractorDown(vp)
     }
 
     fun move(vp: Pt) {
@@ -126,16 +149,55 @@ class MeasureController(
                 }
                 rev++
             }
+            Active.PROT_BASE -> {
+                protractor.dragBaseline(toContent(vp))
+                rev++
+            }
+            Active.PROT_ARC -> {
+                protractor.dragArc(toContent(vp))
+                rev++
+            }
             Active.NONE -> Unit
         }
     }
 
     fun up() {
         if (active == Active.PLACING) point.finishPlacing(MIN_LINE_DP * density / zoomNow())
+        if (active == Active.PROT_BASE) protractor.endBaseline(MIN_LINE_DP * density / zoomNow())
+        if (active == Active.PROT_ARC) finishArc()
         active = Active.NONE
         part = null
         partStart = null
         rev++
+    }
+
+    private fun protractorDown(vp: Pt): Boolean {
+        val at = toContent(vp)
+        when (protractor.phase) {
+            Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> {
+                protractor.beginBaseline(at)
+                active = Active.PROT_BASE
+            }
+            Protractor.Phase.AWAIT_ARC, Protractor.Phase.ARC -> {
+                protractor.beginArc(at)
+                active = Active.PROT_ARC
+            }
+        }
+        rev++
+        return true
+    }
+
+    /** The pen came up: a real sweep is committed as a baseline and a clean arc; a sliver is dropped. */
+    private fun finishArc() {
+        if (protractor.angleDegrees() < MIN_ARC_DEG) {
+            protractor.cancelArc()
+            return
+        }
+        val c = protractor.centre
+        val b = protractor.baseEnd
+        val arc = protractor.arcPoints()
+        protractor.reset()
+        onProtractor(c, b, arc)
     }
 
     private fun pointDown(vp: Pt, finger: Boolean): Boolean {
@@ -220,5 +282,8 @@ class MeasureController(
 
         /** Margin along the band's edges where a pen draws instead of grabbing, in dp. */
         const val EDGE_MARGIN_DP = 24.0
+
+        /** Least sweep, in degrees, that counts as an arc. */
+        const val MIN_ARC_DEG = 0.5
     }
 }

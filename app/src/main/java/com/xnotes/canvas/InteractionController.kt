@@ -1717,6 +1717,28 @@ class InteractionController(
         if (changed) maybeSwitchBackAfterSelect()
     }
 
+    /**
+     * A finished protractor: the baseline and the clean arc, added to the page under the centre as
+     * two shapes so each erases on its own, and undone together. Points arrive in content space.
+     */
+    fun commitProtractor(centre: Pt, baseEnd: Pt, arc: List<Pt>) {
+        val pi = state.pageIndexAtContent(centre) ?: return
+        val page = state.document.pages[pi]
+        val w = shapeConfig.strokeWidth * SHAPE_PEN_PARITY
+        fun local(p: Pt) = state.toPageSpace(pi, p)
+        val line = ShapeItem(ShapeKind.LINE, local(centre), local(baseEnd), inkColor, w)
+        val curve = ShapeItem.poly(ShapeKind.POLYLINE, arc.map { local(it) }, inkColor, w)
+        val added = listOf(line, curve)
+        for (item in added) {
+            page.items.add(item)
+            state.appendToCache(page, item)
+        }
+        history.push(CompositeCommand(added.map { AddItem(page, it) }))
+        state.document.dirty = true
+        onContentChanged()
+        requestRender()
+    }
+
     // --- SHAPE ---
 
     private fun beginShape(content: Pt) {

@@ -63,6 +63,7 @@ val ToolbarItem.labelRes: Int
         ToolbarItem.WAND -> R.string.tool_wand
         ToolbarItem.SHAPE -> R.string.tool_shape
         ToolbarItem.RULER -> R.string.tool_ruler
+        ToolbarItem.PROTRACTOR -> R.string.tool_protractor
         ToolbarItem.TEXT -> R.string.tool_text
         ToolbarItem.TEXT_BOX -> R.string.tool_text_box
         ToolbarItem.IMAGE -> R.string.tool_image

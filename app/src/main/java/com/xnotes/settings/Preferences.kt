@@ -41,6 +41,8 @@ data class Preferences(
     val detectShapes: Boolean = false,
     /** Show measuring readouts in inches instead of cm/mm. */
     val useInches: Boolean = false,
+    /** Decimal places on the protractor's angle readout, 0 to 2. */
+    val protractorDecimals: Int = 1,
     /** Screen pixels per real centimetre as calibrated by hand; 0 uses the density the device reports. */
     val screenPxPerCm: Double = 0.0,
     /** Tool the stylus side button activates while held; "none" disables it. */
@@ -141,6 +143,7 @@ data class Preferences(
         .put("zoom_lock_pan", zoomLockPan)
         .put("detect_shapes", detectShapes)
         .put("use_inches", useInches)
+        .put("protractor_decimals", protractorDecimals)
         .put("screen_px_per_cm", screenPxPerCm)
         .put("pen_button_tool", penButtonTool)
         .put("pen_button_hover", penButtonHover)
@@ -267,6 +270,7 @@ data class Preferences(
                 zoomLockPan = zoomLockPan,
                 detectShapes = o.optBoolean("detect_shapes", false),
                 useInches = o.optBoolean("use_inches", false),
+                protractorDecimals = o.optInt("protractor_decimals", 1).coerceIn(0, 2),
                 screenPxPerCm = o.optDouble("screen_px_per_cm", 0.0),
                 penButtonTool = o.optString("pen_button_tool", "eraser").ifEmpty { "eraser" },
                 penButtonHover = o.optBoolean("pen_button_hover", false),
