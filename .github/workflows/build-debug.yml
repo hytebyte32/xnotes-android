@@ -26,7 +26,17 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;27.0.12077973" "cmake;3.22.1"
 
       - name: Assemble debug APK
-        run: ./gradlew assembleDebug --no-daemon
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug --no-daemon 2>&1 | tee build.log
+
+      # Surface Kotlin compile errors as annotations, so they can be read without the raw log.
+      - name: Report compile errors
+        if: failure()
+        shell: bash
+        run: |
+          grep -E "^e: " build.log | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
