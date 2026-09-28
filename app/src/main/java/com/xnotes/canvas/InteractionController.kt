@@ -330,6 +330,8 @@ class InteractionController(
     private var resizeHandle: HandleId? = null
     private var resizeOldGeom: GeoHandle? = null
     private var resizePageIndex: Int = -1
+    private var resizePointIndex: Int = -1 // >= 0: a point-edited shape's point is being dragged
+    private var resizePointSnap: GeometrySnapshot? = null
 
     // GENERIC TRANSFORM (resize + rotate for any single non-line / multi / mixed selection)
     private var selObb: Obb? = null // the tilting selection box; null when nothing is selected
@@ -1282,30 +1284,28 @@ class InteractionController(
 
     // --- SELECT / BAND ---
 
-    /** The single selected line/arrow whose two endpoints are its own resize handles, or null.
-     *  Every other selection (single non-line, multi, mixed) uses the generic box handles. */
-    private fun singleEndpointShape(): Selected? {
+    /** The single selected shape edited by dragging its own points (line ends, polygon corners,
+     *  rectangle/ellipse corners, curve points), or null. Every other selection (single non-shape,
+     *  multi, mixed) uses the generic box handles. */
+    private fun singlePointShape(): Selected? {
         val sel = selection.singleOrNull() ?: return null
         val item = sel.item
-        return if (item is ShapeItem && item.shape.isEndpointShape) sel else null
+        return if (item is ShapeItem && item.usesPointHandles) sel else null
     }
 
-    /** Resize handles for the current selection in content space: a single line/arrow's two
-     *  endpoint handles, else the eight handles of the oriented selection box. */
+    /** Resize handles for the current selection in content space: one on each point of a single
+     *  point-edited shape, else the eight handles of the oriented selection box. */
     private fun selectionResizeHandles(): List<ResizeHandle> {
-        val endpoint = singleEndpointShape()
-        if (endpoint != null) return endpointHandles(endpoint)
+        val pointShape = singlePointShape()
+        if (pointShape != null) return pointHandles(pointShape).map { ResizeHandle(HandleId.START, it) }
         return selObb?.let { ResizeMath.obbHandles(it) } ?: emptyList()
     }
 
-    /** A line/arrow's two endpoint handles, mapped from page space into content space. */
-    private fun endpointHandles(sel: Selected): List<ResizeHandle> {
+    /** A point-edited shape's draggable points, mapped from page space into content space. */
+    private fun pointHandles(sel: Selected): List<Pt> {
         val item = sel.item as? ShapeItem ?: return emptyList()
         if (state.pageRects.getOrNull(sel.pageIndex) == null) return emptyList()
-        return listOf(
-            ResizeHandle(HandleId.START, state.fromPageSpace(sel.pageIndex, item.start)),
-            ResizeHandle(HandleId.END, state.fromPageSpace(sel.pageIndex, item.end)),
-        )
+        return item.editPoints().map { state.fromPageSpace(sel.pageIndex, it) }
     }
 
     /** Strokes, shapes and images rotate; text doesn't. A mixed selection rotates only when every
@@ -1316,7 +1316,7 @@ class InteractionController(
     /** Rotate-grip centre (content space, no move offset), out past the oriented box's top edge, or
      *  null when the selection can't rotate or is a single line/arrow (reoriented by an endpoint). */
     private fun selectionRotatePoint(): Pt? {
-        if (!selectionIsRotatable() || singleEndpointShape() != null) return null
+        if (!selectionIsRotatable()) return null
         val obb = selObb ?: return null
         return ResizeMath.obbRotateGrip(obb, ROTATE_ARM / state.zoom)
     }
@@ -1344,10 +1344,11 @@ class InteractionController(
                 return true
             }
         }
-        val endpoint = singleEndpointShape()
-        if (endpoint != null) {
-            val id = ResizeMath.hitHandle(endpointHandles(endpoint), content, tol) ?: return false
-            beginResize(endpoint, id)
+        val pointShape = singlePointShape()
+        if (pointShape != null) {
+            val index = pointHandles(pointShape).indexOfFirst { it.distanceTo(content) <= tol }
+            if (index < 0) return false
+            beginPointEdit(pointShape, index)
             return true
         }
         val obb = selObb ?: return false
@@ -1532,6 +1533,18 @@ class InteractionController(
 
     // --- RESIZE ---
 
+    /** Start dragging point [index] of a point-edited shape; the drag is measured from this snapshot. */
+    private fun beginPointEdit(sel: Selected, index: Int) {
+        resizeItem = sel.item
+        resizeHandle = null
+        resizePageIndex = sel.pageIndex
+        resizeOldGeom = null
+        resizePointIndex = index
+        resizePointSnap = sel.item.snapshotGeometry()
+        mode = PointerMode.RESIZE
+        onSelectionMenu(null) // hide while editing
+    }
+
     private fun beginResize(sel: Selected, handle: HandleId) {
         resizeItem = sel.item
         resizeHandle = handle
@@ -1543,6 +1556,15 @@ class InteractionController(
 
     private fun extendResize(content: Pt) {
         val item = resizeItem ?: return
+        if (resizePointIndex >= 0) {
+            val snap = resizePointSnap ?: return
+            val shape = item as? ShapeItem ?: return
+            if (state.pageRects.getOrNull(resizePageIndex) == null) return
+            shape.restoreGeometry(snap)
+            shape.movePoint(resizePointIndex, state.toPageSpace(resizePageIndex, content))
+            requestRender()
+            return
+        }
         val handle = resizeHandle ?: return
         if (state.pageRects.getOrNull(resizePageIndex) == null) return
         val local = state.toPageSpace(resizePageIndex, content)
@@ -1566,6 +1588,20 @@ class InteractionController(
     }
 
     private fun endResize() {
+        if (resizePointIndex >= 0) {
+            val shape = resizeItem as? ShapeItem
+            val snap = resizePointSnap
+            if (shape != null && snap != null) {
+                val after = shape.snapshotGeometry()
+                if (after != snap) {
+                    history.push(TransformItems(listOf(shape), listOf(snap), listOf(after)))
+                    state.document.dirty = true
+                    onContentChanged()
+                }
+            }
+            resizePointIndex = -1
+            resizePointSnap = null
+        }
         val item = resizeItem as? Resizable
         val old = resizeOldGeom
         var changed = false
@@ -1655,6 +1691,8 @@ class InteractionController(
         txSnaps = emptyList()
         txStartObb = null
         txHandle = null
+        // A turned point-edited shape has no use for a tilted box: refit it upright around the new points.
+        if (singlePointShape() != null) selObb = selectionBoundsContent()?.let { Obb.fromAabb(it) }
         mode = PointerMode.IDLE
         refreshSelectionMenu()
         requestRender()
