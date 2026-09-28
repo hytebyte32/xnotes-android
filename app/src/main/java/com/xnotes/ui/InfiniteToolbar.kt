@@ -15,6 +15,7 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import com.xnotes.R
 import com.xnotes.core.tools.Tool
+import com.xnotes.core.measure.RulerMode
 import com.xnotes.core.tools.ToolbarItem
 import com.xnotes.ui.icons.XnotesIcons
 import com.xnotes.ui.theme.toComposeColor
@@ -116,6 +117,12 @@ fun InfiniteToolbar(
                         stringResource(R.string.tool_wand),
                         active = editor.wandEnabled,
                     ) { editor.toggleWand() }
+
+                    ToolbarItem.RULER -> ToolbarIcon(
+                        XnotesIcons.ruler,
+                        stringResource(R.string.tool_ruler),
+                        active = editor.rulerMode != RulerMode.OFF,
+                    ) { editor.toggleRuler() }
 
                     ToolbarItem.IMAGE -> ToolbarIcon(XnotesIcons.image, stringResource(R.string.insert_image)) { onInsertImage() }
 

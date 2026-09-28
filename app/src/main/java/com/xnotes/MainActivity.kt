@@ -1152,6 +1152,7 @@ private fun EditorPane(
                     floatingBar()
                     com.xnotes.ui.SelectionMenu(canvas)
                     com.xnotes.ui.LongPressMenu(canvas, onInsertImageAt = { c -> actions.onInsertCanvasImage(editor, c) })
+                    com.xnotes.ui.RulerOverlay(canvas)
                     com.xnotes.ui.CanvasDebugOverlay(canvas)
                 }
             }

@@ -37,7 +37,7 @@ import kotlin.math.exp
 import kotlin.math.max
 
 /** What the current gesture is doing. */
-enum class CanvasPointerMode { IDLE, PAN, PINCH, DRAW, ERASE, SHAPE, BAND, LASSO, MOVE, RESIZE, ROTATE, POINT }
+enum class CanvasPointerMode { IDLE, PAN, PINCH, DRAW, ERASE, SHAPE, BAND, LASSO, MOVE, RESIZE, ROTATE, POINT, RULER }
 
 /**
  * Gestures on the infinite canvas.
@@ -102,6 +102,10 @@ class InfiniteInteraction(
     private val hasPasteContent: () -> Boolean = { false },
     /** A tool this layer armed by itself, so the chrome can follow: a long-press grab and its end. */
     private val onToolChanged: (Tool) -> Unit = {},
+    /** The ruler gets first refusal on a press: true when it took it, which then drives the gesture. */
+    private val onRulerDown: (Pt, Boolean) -> Boolean = { _, _ -> false },
+    private val onRulerMove: (Pt) -> Unit = {},
+    private val onRulerUp: () -> Unit = {},
 ) {
 
     private val choreographer = Choreographer.getInstance()
@@ -255,6 +259,14 @@ class InfiniteInteraction(
         val vx = e.getX(0).toDouble()
         val vy = e.getY(0).toDouble()
 
+        // The ruler is drawn over everything, so it is asked first.
+        if (onRulerDown(viewport.viewportToContent(Pt(vx, vy)), e.getToolType(0) == MotionEvent.TOOL_TYPE_FINGER)) {
+            cancelLongPress()
+            setInteractive(false, false)
+            mode = CanvasPointerMode.RULER
+            return
+        }
+
         // Which tool this pointer actually drives: the pen's eraser end and its held side button
         // both override the armed tool, and a finger pans unless finger-draw is on. This mirrors
         // the paged canvas so a pen behaves the same on either surface.
@@ -373,6 +385,7 @@ class InfiniteInteraction(
 
     private fun handlePointerDown(e: MotionEvent) {
         cancelLongPress() // a second finger is a pinch, never a held press
+        if (mode == CanvasPointerMode.RULER) return // a second finger never turns a ruler drag into a pinch
         // A stylus stroke ignores an incidental palm or second finger; a finger stroke yields to a
         // pinch, since two fingers can only mean a zoom.
         if (mode == CanvasPointerMode.DRAW && drawingIsStylus) return
@@ -403,6 +416,7 @@ class InfiniteInteraction(
             CanvasPointerMode.RESIZE -> extendResize(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.ROTATE -> extendRotate(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.POINT -> extendPoint(e.getX(0).toDouble(), e.getY(0).toDouble())
+            CanvasPointerMode.RULER -> onRulerMove(viewport.viewportToContent(Pt(e.getX(0).toDouble(), e.getY(0).toDouble())))
             CanvasPointerMode.IDLE -> Unit
         }
     }
@@ -440,6 +454,7 @@ class InfiniteInteraction(
             CanvasPointerMode.MOVE -> endMove()
             CanvasPointerMode.RESIZE, CanvasPointerMode.ROTATE -> endTransform()
             CanvasPointerMode.POINT -> endPoint()
+            CanvasPointerMode.RULER -> onRulerUp()
             else -> Unit
         }
         mode = CanvasPointerMode.IDLE
@@ -464,6 +479,7 @@ class InfiniteInteraction(
             onLiftSelection(emptyList(), LiftTransform.NONE)
             onSelectionChanged()
         }
+        if (mode == CanvasPointerMode.RULER) onRulerUp()
         if (mode == CanvasPointerMode.POINT) {
             selection()?.cancelPointDrag()
             onSelectionChanged()

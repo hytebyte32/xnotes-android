@@ -149,6 +149,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.VIEW to ToolbarItem.STYLES,
             ToolbarItem.MARGINS to ToolbarItem.STYLES,
             ToolbarItem.WAND to ToolbarItem.LASSO,
+            ToolbarItem.RULER to ToolbarItem.SHAPE,
         )
 
         /**
@@ -162,7 +163,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.PEN, ToolbarItem.DASHED, ToolbarItem.CALLIGRAPHY, ToolbarItem.SPEED,
             ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER,
             ToolbarItem.PAN, ToolbarItem.SELECT, ToolbarItem.LASSO, ToolbarItem.WAND,
-            ToolbarItem.SHAPE,
+            ToolbarItem.SHAPE, ToolbarItem.RULER,
             ToolbarItem.IMAGE, ToolbarItem.COLORS, ToolbarItem.UNDO, ToolbarItem.REDO,
             ToolbarItem.STYLES, ToolbarItem.WAYPOINTS, ToolbarItem.MINIMAP,
             ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK,
@@ -198,7 +199,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
                 ToolbarItem.TAPER, ToolbarItem.HIGHLIGHTER, ToolbarItem.ERASER,
             ),
             listOf(ToolbarItem.PAN, ToolbarItem.SELECT, ToolbarItem.LASSO),
-            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE),
+            listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER),
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
             listOf(ToolbarItem.UNDO, ToolbarItem.REDO),
