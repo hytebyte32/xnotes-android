@@ -49,6 +49,7 @@ object OverlayTessellator {
         accent: Rgba,
         tolerance: Double,
         devicePxPerDp: Double = 1.0,
+        pointHandles: List<Pt>? = null,
     ): List<MeshPart> {
         if (zoom <= 0.0) return emptyList()
         val outline = MeshBuilder()
@@ -64,8 +65,10 @@ object OverlayTessellator {
 
         val marks = MeshBuilder()
         val handleHalf = HANDLE_PX / zoom / 2.0
-        for (handle in com.xnotes.canvas.ResizeMath.obbHandles(box)) {
-            marks.rect(handle.content.x - handleHalf, handle.content.y - handleHalf, handleHalf * 2, handleHalf * 2)
+        // A shape edited by its own points shows a handle on each point instead of the eight box ones.
+        val centres = pointHandles ?: com.xnotes.canvas.ResizeMath.obbHandles(box).map { it.content }
+        for (c in centres) {
+            marks.rect(c.x - handleHalf, c.y - handleHalf, handleHalf * 2, handleHalf * 2)
         }
         marks.circle(grip.x, grip.y, GRIP_PX / zoom / 2.0, tolerance)
 

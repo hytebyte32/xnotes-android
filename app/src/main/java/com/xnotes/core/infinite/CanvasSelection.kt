@@ -12,6 +12,7 @@ import com.xnotes.core.history.MoveItems
 import com.xnotes.core.history.TransformItems
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.GeometrySnapshot
+import com.xnotes.core.model.ShapeItem
 
 /**
  * What is selected on the canvas, and the arithmetic of moving, scaling and rotating it.
@@ -69,11 +70,74 @@ class CanvasSelection(private val doc: InfiniteDocument) {
         box = boundsOf(items)?.let { Obb.fromAabb(it) }
     }
 
-    /** True when [p] is inside the selection, so a press there grabs it rather than starting a band. */
-    fun contains(p: Pt): Boolean = box?.contains(p) == true
+    /**
+     * The one shape selected, when it is edited by its own points instead of a box: line ends,
+     * polygon corners, the four corners of a rectangle or ellipse. Null for everything else.
+     */
+    val pointShape: ShapeItem?
+        get() = (items.singleOrNull() as? ShapeItem)?.takeIf { it.usesPointHandles }
 
-    /** The eight resize handles, in content space. */
-    fun handles(): List<ResizeHandle> = box?.let { ResizeMath.obbHandles(it) } ?: emptyList()
+    /** The point handles of [pointShape], in content space; empty when the box handles apply. */
+    fun pointHandles(): List<Pt> = pointShape?.editPoints() ?: emptyList()
+
+    /** Index of the point handle [p] lands on, within [tolerance] content pixels, or null. */
+    fun hitPoint(p: Pt, tolerance: Double): Int? {
+        var best: Int? = null
+        var bestDist = tolerance
+        pointHandles().forEachIndexed { i, pt ->
+            val d = pt.distanceTo(p)
+            if (d <= bestDist) {
+                bestDist = d
+                best = i
+            }
+        }
+        return best
+    }
+
+    private var dragPointIndex = -1
+
+    /** Start dragging point [index]; captures the gesture-start geometry. */
+    fun beginPointDrag(index: Int) {
+        beginTransform()
+        dragPointIndex = index
+    }
+
+    /** Put the dragged point at [pointer], measured from the gesture start so it cannot compound. */
+    fun dragPointLive(pointer: Pt) {
+        val shape = pointShape ?: items.firstOrNull() as? ShapeItem ?: return
+        if (dragPointIndex < 0 || startSnapshots.isEmpty()) return
+        shape.restoreGeometry(startSnapshots[0])
+        shape.movePoint(dragPointIndex, pointer)
+        doc.itemsChanged(items)
+        refreshBox()
+    }
+
+    /** Put the shape back as it was when the drag began, for a cancelled gesture. */
+    fun cancelPointDrag() {
+        if (startSnapshots.isNotEmpty() && items.isNotEmpty()) {
+            items[0].restoreGeometry(startSnapshots[0])
+            doc.itemsChanged(items)
+        }
+        dragPointIndex = -1
+        refreshBox()
+    }
+
+    /** Finish a point drag; the undo edit comes from [buildCommand]. */
+    fun endPointDrag() {
+        dragPointIndex = -1
+    }
+
+    /** True when [p] is inside the selection, so a press there grabs it rather than starting a band. */
+    fun contains(p: Pt): Boolean {
+        pointShape?.let { return it.contains(p) }
+        return box?.contains(p) == true
+    }
+
+    /** The eight resize handles, in content space; none for a shape edited by its points. */
+    fun handles(): List<ResizeHandle> {
+        if (pointShape != null) return emptyList()
+        return box?.let { ResizeMath.obbHandles(it) } ?: emptyList()
+    }
 
     /** The rotate grip's centre, [arm] content pixels past the box's top edge. */
     fun rotateGrip(arm: Double): Pt? = box?.let { ResizeMath.obbRotateGrip(it, arm) }

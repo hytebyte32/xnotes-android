@@ -37,7 +37,7 @@ import kotlin.math.exp
 import kotlin.math.max
 
 /** What the current gesture is doing. */
-enum class CanvasPointerMode { IDLE, PAN, PINCH, DRAW, ERASE, SHAPE, BAND, LASSO, MOVE, RESIZE, ROTATE }
+enum class CanvasPointerMode { IDLE, PAN, PINCH, DRAW, ERASE, SHAPE, BAND, LASSO, MOVE, RESIZE, ROTATE, POINT }
 
 /**
  * Gestures on the infinite canvas.
@@ -402,6 +402,7 @@ class InfiniteInteraction(
             CanvasPointerMode.MOVE -> extendMove(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.RESIZE -> extendResize(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.ROTATE -> extendRotate(e.getX(0).toDouble(), e.getY(0).toDouble())
+            CanvasPointerMode.POINT -> extendPoint(e.getX(0).toDouble(), e.getY(0).toDouble())
             CanvasPointerMode.IDLE -> Unit
         }
     }
@@ -438,6 +439,7 @@ class InfiniteInteraction(
             CanvasPointerMode.LASSO -> endLasso()
             CanvasPointerMode.MOVE -> endMove()
             CanvasPointerMode.RESIZE, CanvasPointerMode.ROTATE -> endTransform()
+            CanvasPointerMode.POINT -> endPoint()
             else -> Unit
         }
         mode = CanvasPointerMode.IDLE
@@ -460,6 +462,10 @@ class InfiniteInteraction(
         if (mode == CanvasPointerMode.MOVE) {
             selection()?.previewMove(0.0, 0.0)
             onLiftSelection(emptyList(), LiftTransform.NONE)
+            onSelectionChanged()
+        }
+        if (mode == CanvasPointerMode.POINT) {
+            selection()?.cancelPointDrag()
             onSelectionChanged()
         }
         if ((mode == CanvasPointerMode.ROTATE || mode == CanvasPointerMode.RESIZE) && liftedTransform) {
@@ -600,6 +606,7 @@ class InfiniteInteraction(
         val grip = sel.rotateGrip(OverlayTessellator.GRIP_ARM_PX / viewport.zoom)
         if (grip != null && at.distanceTo(grip) <= tolerance) return true
         if (sel.hitHandle(at, tolerance) != null) return true
+        if (sel.hitPoint(at, tolerance) != null) return true
         return sel.contains(at)
     }
 
@@ -631,6 +638,12 @@ class InfiniteInteraction(
             sel.beginTransform(at)
             beginLiftedTransform(sel, at)
             mode = CanvasPointerMode.ROTATE
+            return true
+        }
+        val pointIndex = sel.hitPoint(at, tolerance)
+        if (pointIndex != null) {
+            sel.beginPointDrag(pointIndex)
+            mode = CanvasPointerMode.POINT
             return true
         }
         val handle = sel.hitHandle(at, tolerance)
@@ -819,6 +832,23 @@ class InfiniteInteraction(
         } else {
             sel.rotateLive(at)
         }
+        onSelectionChanged()
+        requestRender()
+    }
+
+    /** A point handle drag in progress: the model is edited live, one point moving, the rest held. */
+    private fun extendPoint(vx: Double, vy: Double) {
+        val sel = selection() ?: return
+        sel.dragPointLive(viewport.viewportToContent(Pt(vx, vy)))
+        onSelectionChanged()
+        requestRender()
+    }
+
+    private fun endPoint() {
+        val sel = selection() ?: return
+        sel.endPointDrag()
+        onCommitSelection(sel.buildCommand(movedOnly = false))
+        sel.refreshBox()
         onSelectionChanged()
         requestRender()
     }

@@ -970,7 +970,9 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
             bounds = it.outset(4.0 / zoom)
         }
         selection.box?.let { box ->
-            parts += OverlayTessellator.selection(box, zoom, accent, StrokeTessellator.DEFAULT_TOLERANCE, devicePxPerDp)
+            parts += OverlayTessellator.selection(box, zoom, accent, StrokeTessellator.DEFAULT_TOLERANCE, devicePxPerDp,
+                pointHandles = selection.pointShape?.let { selection.pointHandles() },
+            )
             val b = OverlayTessellator.selectionBounds(box, zoom)
             bounds = bounds?.union(b) ?: b
         }

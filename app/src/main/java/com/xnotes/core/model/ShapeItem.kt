@@ -402,6 +402,59 @@ class ShapeItem(
         points = normalize(verts, bb)
     }
 
+    /**
+     * Whether this shape is edited by dragging its own points (line ends, polygon corners, the four
+     * corners of a rectangle or ellipse) rather than by the selection's bounding box.
+     */
+    val usesPointHandles: Boolean
+        get() = when (shape) {
+            ShapeKind.LINE, ShapeKind.ARROW, ShapeKind.RECTANGLE, ShapeKind.ELLIPSE,
+            ShapeKind.CIRCLE, ShapeKind.TRIANGLE -> true
+            ShapeKind.POLYGON, ShapeKind.POLYLINE -> (points?.size ?: 0) in 2..MAX_EDIT_POINTS
+            ShapeKind.CURVE -> false
+        }
+
+    /** The draggable points, in content space; the index is what [movePoint] takes. */
+    fun editPoints(): List<Pt> = when (shape) {
+        ShapeKind.LINE, ShapeKind.ARROW -> listOf(start, end)
+        ShapeKind.RECTANGLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> {
+            val b = box
+            listOf(Pt(b.left, b.top), Pt(b.right, b.top), Pt(b.right, b.bottom), Pt(b.left, b.bottom))
+        }
+        ShapeKind.TRIANGLE -> triangleVertices()
+        ShapeKind.POLYGON, ShapeKind.POLYLINE -> absPoints()
+        ShapeKind.CURVE -> emptyList()
+    }
+
+    /**
+     * Drag point [index] to [to]. Call on a shape restored to its gesture-start geometry, so the
+     * index still names the same point. A box shape moves the corner and holds the opposite one; a
+     * triangle or circle that no longer fits its kind becomes a polygon or ellipse.
+     */
+    fun movePoint(index: Int, to: Pt) {
+        when (shape) {
+            ShapeKind.LINE, ShapeKind.ARROW -> if (index == 0) start = to else end = to
+            ShapeKind.RECTANGLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> {
+                val corners = editPoints()
+                val opposite = corners[(index + 2) % 4]
+                if (shape == ShapeKind.CIRCLE) shape = ShapeKind.ELLIPSE
+                start = opposite
+                end = to
+            }
+            ShapeKind.TRIANGLE, ShapeKind.POLYGON, ShapeKind.POLYLINE -> {
+                val verts = editPoints().toMutableList()
+                if (index !in verts.indices) return
+                verts[index] = to
+                if (shape == ShapeKind.TRIANGLE) shape = ShapeKind.POLYGON
+                val bb = Rect.bounding(verts)
+                start = bb.topLeft
+                end = Pt(bb.right, bb.bottom)
+                points = normalize(verts, bb)
+            }
+            ShapeKind.CURVE -> Unit
+        }
+    }
+
     /** Content-space vertices of the current outline; used to bake a rotation into a vertex list. */
     private fun currentOutline(): List<Pt> = when (shape) {
         ShapeKind.POLYGON, ShapeKind.POLYLINE, ShapeKind.CURVE -> absPoints()
@@ -416,6 +469,9 @@ class ShapeItem(
     companion object {
         const val KIND = "shape"
         const val HIT_TOLERANCE = 6.0
+
+        /** A polygon with more vertices than this (a baked ellipse) keeps the box handles. */
+        const val MAX_EDIT_POINTS = 24
 
         /** Build a polygon/polyline from absolute [vertices], stored normalized to their box. */
         fun poly(
