@@ -4821,10 +4821,10 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.previousTool?.let { selectTool(it) }
     }
 
-    /** A colour chosen on the floating palette: arms it as the ink, and recolours an active text box. */
+    /** A colour chosen on the floating palette: written into the selected toolbar swatch, so it is the ink and is saved with the swatches. */
     fun pickPaletteColor(c: Rgba) {
-        controller.pickInk(c)
-        refreshTextBar()
+        setSwatchColor(activeColorIndex, c.copy(a = 255))
+        settingsDirty = true
     }
 
     fun pickColor(index: Int) {
