@@ -10,7 +10,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.runtime.Composable
 
 /**
- * Marks the edge of a limited infinite canvas: a dim scrim over everything outside the extent and
+ * Marks the edge of the canvas: an opaque desk colour over everything outside the page and
  * a border line on it. Purely visual; the scroll clamp lives in [com.xnotes.core.infinite.CanvasViewport].
  * The top and left edges always show, since the canvas starts there.
  */
@@ -31,7 +31,11 @@ fun CanvasLimitsOverlay(editor: InfiniteEditor) {
         val right = if (w != null) ((doc.originX + w - vp.scrollX) * z).toFloat() else 1e6f
         val top = ((doc.originY - vp.scrollY) * z).toFloat()
         val bottom = if (h != null) ((doc.originY + h - vp.scrollY) * z).toFloat() else 1e6f
-        val scrim = Color(0x59000000)
+        // Beyond the page is an opaque desk, not a tint over the grid, so the page reads as a page and
+        // its size is obvious at every zoom. The desk contrasts with the paper, light on dark and back.
+        val paper = editor.view.paperColor
+        val lum = (0.299 * paper.r + 0.587 * paper.g + 0.114 * paper.b) / 255.0
+        val scrim = if (lum > 0.5) Color(0xFF8E8E93) else Color(0xFF0B0B0D)
         // Four bands around the extent, clipped to the viewport.
         fun band(x0: Float, y0: Float, x1: Float, y1: Float) {
             val a = x0.coerceIn(0f, vw)
@@ -44,8 +48,8 @@ fun CanvasLimitsOverlay(editor: InfiniteEditor) {
         band(0f, bottom, vw, vh) // below
         band(0f, top, left, bottom) // left
         band(right, top, vw, bottom) // right
-        val line = Color(0xCC888888)
-        val sw = Stroke(width = 2f)
+        val line = if (lum > 0.5) Color(0xFF5A5A5F) else Color(0xFF6A6A70)
+        val sw = Stroke(width = 3f)
         // The top and left edges always exist; the far edges only on a limited axis.
         val yLo = top.coerceIn(0f, vh)
         val yHi = bottom.coerceIn(0f, vh)

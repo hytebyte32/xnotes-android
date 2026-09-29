@@ -1022,7 +1022,14 @@ class InfiniteInteraction(
         mode = CanvasPointerMode.IDLE
         // Leave the new shape selected, as a note does, so it can be resized or turned straight
         // away. The chrome only shows over a settled selection, so the handles arrive at pen up.
-        selection()?.select(listOf(shape))
+        val sel = selection()
+        sel?.select(listOf(shape))
+        // The pen is still down: it keeps steering the shape, moving the point nearest it, until it lifts.
+        val idx = stroke.samples.lastOrNull()?.let { shape.nearestEditPoint(it.pos) } ?: -1
+        if (sel != null && idx >= 0) {
+            sel.beginPointDrag(idx)
+            mode = CanvasPointerMode.POINT
+        }
         onSelectionChanged()
         requestRender()
     }

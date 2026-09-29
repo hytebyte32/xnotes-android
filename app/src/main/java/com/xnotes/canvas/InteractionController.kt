@@ -1042,8 +1042,11 @@ class InteractionController(
         cancelDwell()
         // Auto-select the new shape so it can be resized right away. The menu only shows once the
         // gesture settles, so flag it for the pen lift (endDraw) rather than mid-stroke here.
-        setSelection(listOf(Selected(pageIndex, shape)))
-        snappedSelectionPendingMenu = true
+        val sel = Selected(pageIndex, shape)
+        setSelection(listOf(sel))
+        // The pen is still down: it keeps steering the shape, moving the point nearest it, until it lifts.
+        val idx = stroke.samples.lastOrNull()?.let { shape.nearestEditPoint(it.pos) } ?: -1
+        if (idx >= 0) beginPointEdit(sel, idx) else snappedSelectionPendingMenu = true
         onContentChanged()
         onHaptic()
         requestRender()

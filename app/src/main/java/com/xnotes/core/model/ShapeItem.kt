@@ -415,6 +415,12 @@ class ShapeItem(
             ShapeKind.CURVE -> (points?.size ?: 0) >= CURVE_NODES
         }
 
+    /** Index of the draggable point nearest [p], or -1 when this shape has none. */
+    fun nearestEditPoint(p: Pt): Int {
+        if (!usesPointHandles) return -1
+        return editPoints().withIndex().minByOrNull { it.value.distanceTo(p) }?.index ?: -1
+    }
+
     /** The draggable points, in content space; the index is what [movePoint] takes. */
     fun editPoints(): List<Pt> = when (shape) {
         ShapeKind.LINE, ShapeKind.ARROW -> listOf(start, end)
