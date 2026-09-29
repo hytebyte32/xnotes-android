@@ -155,7 +155,7 @@ object XnotesIcons {
     )
     // A half-disc with a tick at the middle and each shoulder, and the centre marked on the baseline.
     val protractor = icon(
-        "M3 19a9 9 0 0 1 18 0Z", "M12 19v-3", "M6.4 14.6 8.5 16.2", "M17.6 14.6 15.5 16.2",
+        "M3 16.5a9 9 0 0 1 18 0Z", "M12 16.5v-3", "M6.4 12.1 8.5 13.7", "M17.6 12.1 15.5 13.7",
     )
     val magicWand = icon(
         "m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z",
