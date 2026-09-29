@@ -157,7 +157,8 @@ fun ColorPalette(
                         val id = down.id
                         val half = bubble / 2f
                         val fromCentre = hypot(down.position.x - half, down.position.y - half)
-                        val pickMode = fromCentre <= bubble * 0.30f
+                        // Only the centre disc picks; the ring and the gap round the disc drag the bubble.
+                        val pickMode = fromCentre <= bubble * 0.5f * 0.62f * 0.85f
                         var bx = cxNowValue(px, wNow, marginNow)
                         var by = cyNowValue(py, hNow, marginNow)
                         val tracker = VelocityTracker()
@@ -280,7 +281,7 @@ private fun DrawScope.slice(
     drawArc(color, startDeg + gap / 2f, sweepDeg - gap, false, tl, sz, style = Stroke(band))
 }
 
-private const val BUBBLE_DP = 72f
+private const val BUBBLE_DP = 88f
 private const val RING_INNER_DP = 34f
 private const val RING_OUTER_DP = 84f
 private const val DEAD_ZONE_DP = 20f
