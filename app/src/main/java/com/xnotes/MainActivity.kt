@@ -1205,6 +1205,7 @@ private fun EditorPane(
                     com.xnotes.ui.LongPressMenu(canvas, onInsertImageAt = { c -> actions.onInsertCanvasImage(editor, c) })
                     com.xnotes.ui.CanvasLimitsOverlay(canvas)
                     com.xnotes.ui.RulerOverlay(canvas.measure)
+                    com.xnotes.ui.PaletteHost(editor, canvas.tool, { canvas.inkColor }, { canvas.armInkColor(it) })
                     com.xnotes.ui.CanvasDebugOverlay(canvas)
                 }
             }
@@ -1240,6 +1241,7 @@ private fun EditorPane(
                             com.xnotes.ui.TextEditorOverlay(editor, field)
                         }
                         com.xnotes.ui.RulerOverlay(editor.measure)
+                        com.xnotes.ui.PaletteHost(editor, editor.tool, { editor.controller.inkColor }, editor::pickPaletteColor)
                         floatingBar()
                         com.xnotes.ui.SelectionMenu(editor)
                         com.xnotes.ui.ScreenshotMenu(editor)

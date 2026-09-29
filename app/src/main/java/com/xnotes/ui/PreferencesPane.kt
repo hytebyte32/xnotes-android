@@ -254,6 +254,34 @@ fun PreferencesPane(
             CheckRow(stringResource(R.string.pref_start_fullscreen), editor.fullscreen) { editor.setFullscreenPref(it) }
 
             HorizontalDivider(color = palette.border.toComposeColor())
+            SectionTitle("Colour palette")
+            CheckRow("Show the floating palette while a colour tool is armed", prefs.paletteEnabled) { updateHome(prefs.copy(paletteEnabled = it)) }
+            CheckRow("Allow a finger on the palette (the pen always can)", prefs.paletteFinger) { updateHome(prefs.copy(paletteFinger = it)) }
+            FieldLabel("Colours, 2 to 8: press the bubble's middle and drag toward one")
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                prefs.paletteColors.forEachIndexed { i, c ->
+                    ColorPickerDot(
+                        c,
+                        custom = true,
+                        onPick = { nc ->
+                            updateHome(prefs.copy(paletteColors = prefs.paletteColors.toMutableList().also { it[i] = nc.copy(a = 255) }))
+                        },
+                        dismissOnPick = false,
+                    ) { d, p -> PageColorGridPopup(c, d, p) }
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (prefs.paletteColors.size < 8) {
+                    Chip("Add colour", false) { updateHome(prefs.copy(paletteColors = prefs.paletteColors + prefs.paletteColors.last())) }
+                }
+                if (prefs.paletteColors.size > 2) {
+                    Chip("Remove last", false) { updateHome(prefs.copy(paletteColors = prefs.paletteColors.dropLast(1))) }
+                }
+                Chip("Reset colours", false) { updateHome(prefs.copy(paletteColors = Preferences.DEFAULT_PALETTE)) }
+                Chip("Reset position", false) { updateHome(prefs.copy(paletteX = 0.92, paletteY = 0.45)) }
+            }
+
+            HorizontalDivider(color = palette.border.toComposeColor())
             SectionTitle(stringResource(R.string.pref_measuring))
             CheckRow(stringResource(R.string.pref_use_inches), prefs.useInches) { update(prefs.copy(useInches = it)) }
             FieldLabel(stringResource(R.string.pref_protractor_decimals))

@@ -92,6 +92,15 @@ data class Preferences(
     val defaultCodeLanguage: String = "cpp",
     /** Language the format bar's code toggle last applied; "" until a language is picked. */
     val lastCodeLanguage: String = "",
+    /** The floating colour palette: shown while a colour-drawing tool is armed. */
+    val paletteEnabled: Boolean = true,
+    /** Colours on the palette ring, 2 to 8. */
+    val paletteColors: List<Rgba> = DEFAULT_PALETTE,
+    /** Whether a finger can use the palette (the pen always can). */
+    val paletteFinger: Boolean = false,
+    /** Where the palette bubble sits, as a share of the canvas area. */
+    val paletteX: Double = 0.92,
+    val paletteY: Double = 0.45,
     /** Whether typed markdown markers (# - ** `) convert the text as you write. */
     val markdownInput: Boolean = true,
     /** Whether typing "/" at a word start opens the command menu. */
@@ -187,6 +196,11 @@ data class Preferences(
             codeThemeName?.let { put("code_theme_name", it) }
             put("default_code_language", defaultCodeLanguage)
             lastCodeLanguage.takeIf { it.isNotEmpty() }?.let { put("last_code_language", it) }
+            put("palette_enabled", paletteEnabled)
+            put("palette_colors", org.json.JSONArray().apply { paletteColors.forEach { put(it.toArgb()) } })
+            put("palette_finger", paletteFinger)
+            put("palette_x", paletteX)
+            put("palette_y", paletteY)
             put("markdown_input", markdownInput)
             put("slash_commands", slashCommands)
         }
@@ -205,6 +219,12 @@ data class Preferences(
         .put("show_extensions", showExtensions)
 
     companion object {
+        /** Palette ring colours a fresh install starts with. */
+        val DEFAULT_PALETTE = listOf(
+            Rgba(20, 20, 20, 255), Rgba(229, 57, 53, 255), Rgba(30, 136, 229, 255),
+            Rgba(67, 160, 71, 255), Rgba(251, 140, 0, 255), Rgba(142, 36, 170, 255),
+        )
+
         val DEFAULT_ACCENT = Rgba(0, 230, 118, 255)
         val DEFAULT_MATERIAL_SINGLE = Rgba(244, 67, 54, 255)
         val DEFAULT_MATERIAL_DUAL = Rgba(154, 124, 66, 255)
@@ -296,6 +316,13 @@ data class Preferences(
                 defaultCodeLanguage = o.optString("default_code_language", "cpp")
                     .lowercase().trim().ifEmpty { "cpp" },
                 lastCodeLanguage = o.optString("last_code_language").lowercase().trim(),
+                paletteEnabled = o.optBoolean("palette_enabled", true),
+                paletteColors = o.optJSONArray("palette_colors")?.let { a ->
+                    (0 until a.length()).map { Rgba.fromArgb(a.optInt(it)) }.take(8)
+                }?.takeIf { it.size >= 2 } ?: DEFAULT_PALETTE,
+                paletteFinger = o.optBoolean("palette_finger", false),
+                paletteX = o.optDouble("palette_x", 0.92).coerceIn(0.0, 1.0),
+                paletteY = o.optDouble("palette_y", 0.45).coerceIn(0.0, 1.0),
                 markdownInput = o.optBoolean("markdown_input", true),
                 slashCommands = o.optBoolean("slash_commands", true),
                 switcherLayouts = o.optJSONArray("switcher_layouts")?.let { a ->

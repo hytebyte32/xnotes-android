@@ -4821,6 +4821,12 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.previousTool?.let { selectTool(it) }
     }
 
+    /** A colour chosen on the floating palette: arms it as the ink, and recolours an active text box. */
+    fun pickPaletteColor(c: Rgba) {
+        controller.pickInk(c)
+        refreshTextBar()
+    }
+
     fun pickColor(index: Int) {
         activeColorIndex = index
         // pickInk also recolours the active text box (editing or selected), so the 5 toolbar
