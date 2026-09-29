@@ -136,6 +136,9 @@ private fun standardPenAction(action: Int): Int = when (action) {
     else -> -1
 }
 
+/** Set after a restore when the saved note folder needs the system picker again. */
+private var relinkRoot by mutableStateOf<Uri?>(null)
+
 class MainActivity : ComponentActivity() {
 
     // The editor owns the fullscreen state (persisted preference, default depends on the display
@@ -147,6 +150,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A fresh install (or a new signing key) brings back the last backup before anything reads settings.
+        if (com.xnotes.platform.ConfigBackup.isFreshInstall(this) && com.xnotes.platform.ConfigBackup.restore(this)) {
+            relinkRoot = com.xnotes.settings.SettingsRepository(this).load().browseRoot?.let(Uri::parse)
+                ?.takeIf { needsRelink(it) }
+        }
         com.xnotes.platform.FontCatalog.init(this)
         com.xnotes.platform.TemplateLibrary.init(this)
         setTheme(com.xnotes.R.style.Theme_Xnotes) // leave the dark launch/splash theme behind
@@ -247,6 +255,44 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         editor?.persist()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        val app = applicationContext
+        if (com.xnotes.platform.ConfigBackup.hasAccess() && backingUp.compareAndSet(false, true)) {
+            Thread { try { com.xnotes.platform.ConfigBackup.backup(app) } finally { backingUp.set(false) } }.start()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        offerAllFilesAccess()
+    }
+
+    private val backingUp = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    private fun needsRelink(uri: Uri): Boolean {
+        if (uri.authority == packageName + ".documents") return false
+        return contentResolver.persistedUriPermissions.none { it.uri == uri }
+    }
+
+    /** One-time explanation before sending the user to the "All files access" switch that backups need. */
+    private fun offerAllFilesAccess() {
+        if (com.xnotes.platform.ConfigBackup.hasAccess()) return
+        val flag = java.io.File(filesDir, "config/backup_prompt_done")
+        if (flag.exists()) return
+        runCatching { flag.parentFile?.mkdirs(); flag.writeText("1") }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Back up your settings and notes?")
+            .setMessage("Allow \"All files access\" so xnotes can keep a copy of your settings and notes in Documents/xnotes-backup. Updates and reinstalls then restore everything automatically.")
+            .setPositiveButton("Allow") { _, _ ->
+                runCatching {
+                    startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName")))
+                }
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     private fun applyFullscreen(fullscreen: Boolean) {
@@ -461,6 +507,11 @@ private fun EditorScreen(
             runCatching { resolver.takePersistableUriPermission(it, rwFlags) }
             editor.updateBrowseRoot(it.toString())
         }
+    }
+    // After a restore, ask for the saved note folder again (the system forgets folder grants on reinstall).
+    androidx.compose.runtime.LaunchedEffect(relinkRoot) {
+        relinkRoot?.let { pickRootLauncher.launch(it) }
+        relinkRoot = null
     }
 
     /** Open the "Save as" picker for [target], remembering which pane its result belongs to. */
