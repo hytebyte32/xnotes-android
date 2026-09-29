@@ -91,16 +91,27 @@ class MeasureController(
         switchTo(if (mode == RulerMode.PROTRACTOR) RulerMode.OFF else RulerMode.PROTRACTOR)
     }
 
-    /** Keep the protractor as it stands and clear it, so the next press sets a new centre. */
-    fun newProtractor() {
-        keepProtractor()
-        active = Active.NONE
-        rev++
-    }
+    /** Locks on the two-point ruler: the point distance, the angle, and where the start point sits. */
+    var lockLength by mutableStateOf(false)
+    var lockRotation by mutableStateOf(false)
+    var lockPosition by mutableStateOf(false)
 
-    /** Keep the current line's reading and clear it, so the next press places a new one. */
-    fun newLine() {
-        keepRuler()
+    /** Whether there is a finished-enough drawing for [confirm] to keep. */
+    val canConfirm: Boolean
+        get() = when (mode) {
+            RulerMode.TWO_POINT -> point.placed
+            RulerMode.PROTRACTOR -> protractor.phase == Protractor.Phase.ARC && protractor.angleDegrees() >= MIN_ARC_DEG
+            RulerMode.OFF -> false
+        }
+
+    /** Save the drawing on the canvas and clear it, leaving the tool on for the next one. */
+    fun confirm() {
+        when (mode) {
+            RulerMode.TWO_POINT -> keepRuler()
+            RulerMode.PROTRACTOR -> keepProtractor()
+            RulerMode.OFF -> Unit
+        }
+        active = Active.NONE
         rev++
     }
 
@@ -131,7 +142,7 @@ class MeasureController(
 
     // --- touch ---
 
-    private enum class Active { NONE, PLACING, POINT_PART, PROT_BASE, PROT_ARC, PROT_PART }
+    private enum class Active { NONE, PLACING, POINT_PART, PROT_BASE, PROT_PART }
 
     private var active = Active.NONE
     private var part: PointRulerPart? = null
@@ -158,10 +169,6 @@ class MeasureController(
                 protractor.dragBaseline(AngleSnap.snapEnd(protractor.centre, toContent(vp)))
                 rev++
             }
-            Active.PROT_ARC -> {
-                protractor.dragArc(toContent(vp))
-                rev++
-            }
             Active.PROT_PART -> protMove(toContent(vp))
             Active.NONE -> Unit
         }
@@ -170,7 +177,6 @@ class MeasureController(
     fun up() {
         if (active == Active.PLACING) point.finishPlacing(MIN_LINE_DP * density / zoomNow())
         if (active == Active.PROT_BASE) protractor.endBaseline(MIN_LINE_DP * density / zoomNow())
-        if (active == Active.PROT_ARC) finishArc()
         active = Active.NONE
         part = null
         partStart = null
@@ -194,10 +200,8 @@ class MeasureController(
                 protractor.beginBaseline(at)
                 active = Active.PROT_BASE
             }
-            Protractor.Phase.AWAIT_ARC, Protractor.Phase.ARC -> {
-                protractor.beginArc(at)
-                active = Active.PROT_ARC
-            }
+            // With both arms out, a press away from the tool is not the tool's.
+            Protractor.Phase.ARC -> return false
         }
         rev++
         return true
@@ -216,11 +220,6 @@ class MeasureController(
             null -> Unit
         }
         rev++
-    }
-
-    /** The pen came up: a sliver is dropped; a real sweep stays on screen, adjustable, until the tool is left. */
-    private fun finishArc() {
-        if (protractor.angleDegrees() < MIN_ARC_DEG) protractor.cancelArc()
     }
 
     /** Hand the finished protractor to the canvas to keep as shapes and a reading, then clear it. */
@@ -267,11 +266,36 @@ class MeasureController(
         val snap = partStart ?: return
         point.restore(snap)
         when (p) {
-            PointRulerPart.START -> point.moveEnd(p, AngleSnap.snapEnd(point.end, at))
-            PointRulerPart.END -> point.moveEnd(p, AngleSnap.snapEnd(point.start, at))
-            PointRulerPart.BODY -> point.translate(at.x - grab.x, at.y - grab.y)
+            PointRulerPart.BODY -> if (!lockPosition) point.translate(at.x - grab.x, at.y - grab.y)
+            PointRulerPart.START -> if (!lockPosition) dragEndWithLocks(p, snap.end, snap.start, at)
+            PointRulerPart.END -> dragEndWithLocks(p, snap.start, snap.end, at)
         }
         rev++
+    }
+
+    /**
+     * Move the end [p] toward [at] with the other end at [fixed] (the dragged end began at [from]).
+     * Rotation locked: the end only slides along the line. Length locked: it only swings round
+     * [fixed]. Both: it stays put.
+     */
+    private fun dragEndWithLocks(p: PointRulerPart, fixed: Pt, from: Pt, at: Pt) {
+        if (lockLength && lockRotation) return
+        val v0 = from - fixed
+        val len0 = v0.length()
+        var target = at
+        if (lockRotation && len0 > 1e-9) {
+            val u = Pt(v0.x / len0, v0.y / len0)
+            val t = (at - fixed).x * u.x + (at - fixed).y * u.y
+            target = Pt(fixed.x + u.x * t, fixed.y + u.y * t)
+        } else {
+            target = AngleSnap.snapEnd(fixed, at)
+        }
+        if (lockLength) {
+            val v = target - fixed
+            val l = v.length()
+            if (l > 1e-9) target = Pt(fixed.x + v.x / l * len0, fixed.y + v.y / l * len0)
+        }
+        point.moveEnd(p, target)
     }
 
     companion object {

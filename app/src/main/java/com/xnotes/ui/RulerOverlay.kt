@@ -6,6 +6,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -60,43 +61,41 @@ fun RulerOverlay(measure: MeasureController) {
                 RulerMode.OFF -> Unit
             }
         }
-        if (mode == RulerMode.TWO_POINT) {
-            val placed = measure.point.placed
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 18.dp)
-                    .background(Color(0xE6FFFFFF), RoundedCornerShape(18.dp))
-                    .then(if (placed) Modifier.clickable { measure.newLine() } else Modifier)
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-            ) {
-                Text(
-                    if (placed) "New ruler line" else "Press and drag to measure",
-                    color = Color(0xFF222222),
-                    fontSize = 13.sp,
-                )
-            }
-        }
-        if (mode == RulerMode.PROTRACTOR) {
-            val phase = measure.protractor.phase
-            val hint = when (phase) {
-                Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> "Press the centre and drag out the baseline"
-                Protractor.Phase.AWAIT_ARC -> "Now draw the arc from the baseline  \u2022  tap here to start over"
-                Protractor.Phase.ARC -> "New protractor  \u2022  drag a handle or the lines to adjust"
-            }
-            if (hint.isNotEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 18.dp)
-                        .background(Color(0xE6FFFFFF), RoundedCornerShape(18.dp))
-                        .then(if (phase != Protractor.Phase.IDLE && phase != Protractor.Phase.BASELINE) Modifier.clickable { measure.newProtractor() } else Modifier)
-                        .padding(horizontal = 14.dp, vertical = 8.dp),
-                ) {
-                    Text(hint, color = Color(0xFF222222), fontSize = 13.sp)
+        Row(
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
+            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (mode == RulerMode.TWO_POINT) {
+                if (measure.point.placed) {
+                    PillButton("Length", measure.lockLength) { measure.lockLength = !measure.lockLength }
+                    PillButton("Rotation", measure.lockRotation) { measure.lockRotation = !measure.lockRotation }
+                    PillButton("Position", measure.lockPosition) { measure.lockPosition = !measure.lockPosition }
+                } else {
+                    PillButton("Press and drag to measure", false, null)
                 }
+            } else {
+                val hint = when (measure.protractor.phase) {
+                    Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> "Press the centre and drag out the first arm"
+                    Protractor.Phase.ARC -> "Drag either arm end to set the angle"
+                }
+                PillButton(hint, false, null)
             }
+            if (measure.canConfirm) PillButton("Confirm", true) { measure.confirm() }
         }
+    }
+}
+
+/** A rounded pill: a plain label when [onClick] is null, otherwise a button that shows [on] as filled. */
+@Composable
+private fun PillButton(text: String, on: Boolean, onClick: (() -> Unit)?) {
+    Box(
+        modifier = Modifier
+            .background(if (on) Color(0xF2263238) else Color(0xE6FFFFFF), RoundedCornerShape(18.dp))
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(text, color = if (on) Color.White else Color(0xFF222222), fontSize = 13.sp)
     }
 }
 
