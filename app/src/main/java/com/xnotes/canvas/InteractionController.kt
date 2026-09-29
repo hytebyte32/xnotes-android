@@ -1054,12 +1054,9 @@ class InteractionController(
 
     // --- ERASE ---
 
-    // SCALE off: hold the eraser at a constant on-screen size by shrinking its content-space
-    // radius as you zoom in (both the hit-test and the cursor circle derive from this).
-    private fun eraserRadius(): Double {
-        val cfg = configFor(Tool.ERASER)
-        return if (cfg.scale) cfg.baseWidth else cfg.baseWidth / state.zoom
-    }
+    // The eraser holds a constant on-screen size by shrinking its content-space radius as you zoom in
+    // (both the hit-test and the cursor circle derive from this).
+    private fun eraserRadius(): Double = configFor(Tool.ERASER).baseWidth / state.zoom
 
     private fun areaErase(): Boolean = configFor(Tool.ERASER).eraseMode == EraseMode.AREA
 

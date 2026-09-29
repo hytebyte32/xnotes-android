@@ -1027,11 +1027,8 @@ class InfiniteInteraction(
 
     // --- erasing ---
 
-    /** Eraser radius in content pixels: the tool's width, or a constant on-screen size when off. */
-    fun eraserRadius(): Double {
-        val cfg = configFor(Tool.ERASER)
-        return if (cfg.scale) cfg.baseWidth else cfg.baseWidth / viewport.zoom
-    }
+    /** Eraser radius in content pixels: always a constant on-screen size, whatever the zoom. */
+    fun eraserRadius(): Double = configFor(Tool.ERASER).baseWidth / viewport.zoom
 
     private fun areaErase(): Boolean = configFor(Tool.ERASER).eraseMode == EraseMode.AREA
 

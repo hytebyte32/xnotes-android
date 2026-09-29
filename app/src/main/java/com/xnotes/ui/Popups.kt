@@ -856,8 +856,6 @@ fun EraserConfigPopup(editor: ToolPopupHost, onDismiss: () -> Unit) {
             }
             val r = ToolConversions.widthRange(Tool.ERASER)
             SliderRow(stringResource(R.string.caption_size), size, r.start.toFloat()..r.endInclusive.toFloat()) { size = it; emit() }
-            // SCALE off: the eraser holds a constant on-screen size whatever zoom you are at.
-            ToggleRow(stringResource(R.string.caption_scale), scale) { scale = it; emit() }
             // Re-arm the previous pen/highlighter once an erase lifts, so a quick fix doesn't strand
             // you in the eraser.
             ToggleRow(stringResource(R.string.caption_switch_back), switchBack) { switchBack = it; emit() }
