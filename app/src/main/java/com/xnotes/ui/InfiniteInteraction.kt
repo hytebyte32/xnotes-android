@@ -952,18 +952,9 @@ class InfiniteInteraction(
         return Pt(anchor.x + sx * side, anchor.y + sy * side)
     }
 
-    /** Snap a line or arrow's dragged end to an exact horizontal or vertical run from [anchor]. */
+    /** Pull a line or arrow's dragged end weakly onto 30, 45 and 90 degree angles from [anchor]. */
     private fun snapAxisEndpoint(anchor: Pt, p: Pt): Pt {
-        val dx = p.x - anchor.x
-        val dy = p.y - anchor.y
-        if (dx == 0.0 && dy == 0.0) return p
-        val snap = Math.toRadians(InteractionController.SHAPE_AXIS_SNAP_DEG)
-        val fromHoriz = atan2(abs(dy), abs(dx)) // 0 is horizontal, PI/2 is vertical
-        return when {
-            fromHoriz <= snap -> Pt(p.x, anchor.y)
-            fromHoriz >= Math.PI / 2.0 - snap -> Pt(anchor.x, p.y)
-            else -> p
-        }
+        return com.xnotes.core.geometry.AngleSnap.snapEnd(anchor, p)
     }
 
     // --- hold still to snap a freehand stroke into a shape ---

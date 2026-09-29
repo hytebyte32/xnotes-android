@@ -1578,7 +1578,7 @@ class InteractionController(
             selObb = res.obb
             world = res.transform
         } else {
-            val theta = atan2(content.y - txCenter.y, content.x - txCenter.x) - txGrabAngle
+            val theta = com.xnotes.core.geometry.AngleSnap.snapAngle(atan2(content.y - txCenter.y, content.x - txCenter.x) - txGrabAngle)
             selObb = obb0.copy(angle = txStartAngle + theta)
             world = Affine.rotateAbout(txCenter, theta)
         }
@@ -1710,16 +1710,7 @@ class InteractionController(
     /** Snap a line/arrow's dragged endpoint to an exactly horizontal or vertical run from [anchor]
      *  when it lands within [SHAPE_AXIS_SNAP_DEG] of one (mirrors the recognizer's axis snap). */
     private fun snapAxisEndpoint(anchor: Pt, p: Pt): Pt {
-        val dx = p.x - anchor.x
-        val dy = p.y - anchor.y
-        if (dx == 0.0 && dy == 0.0) return p
-        val snap = Math.toRadians(SHAPE_AXIS_SNAP_DEG)
-        val fromHoriz = atan2(abs(dy), abs(dx)) // 0 = horizontal, PI/2 = vertical
-        return when {
-            fromHoriz <= snap -> Pt(p.x, anchor.y)
-            fromHoriz >= Math.PI / 2.0 - snap -> Pt(anchor.x, p.y)
-            else -> p
-        }
+        return com.xnotes.core.geometry.AngleSnap.snapEnd(anchor, p)
     }
 
     private fun endShape() {

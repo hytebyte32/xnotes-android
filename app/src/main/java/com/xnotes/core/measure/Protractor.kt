@@ -32,9 +32,15 @@ class Protractor {
     var radius: Double = 0.0
         private set
 
-    /** Signed sweep from the baseline, radians: positive turns the way +angle does (clockwise on screen). */
-    var sweep: Double = 0.0
-        private set
+    /** The sweep the pen has actually made, before any snapping. */
+    private var rawSweep: Double = 0.0
+
+    /**
+     * Signed sweep from the baseline, radians: positive turns the way +angle does (clockwise on
+     * screen). Pulled weakly onto 30, 45 and 90 degrees; the pen's own sweep is kept apart so the
+     * pull can be pushed through.
+     */
+    val sweep: Double get() = com.xnotes.core.geometry.AngleSnap.snapAngle(rawSweep)
 
     private var lastTheta = 0.0
 
@@ -42,14 +48,14 @@ class Protractor {
 
     fun reset() {
         phase = Phase.IDLE
-        sweep = 0.0
+        rawSweep = 0.0
         radius = 0.0
     }
 
     fun beginBaseline(p: Pt) {
         centre = p
         baseEnd = p
-        sweep = 0.0
+        rawSweep = 0.0
         radius = 0.0
         phase = Phase.BASELINE
     }
@@ -72,7 +78,7 @@ class Protractor {
     fun beginArc(p: Pt) {
         radius = maxOf(centre.distanceTo(p), 1.0)
         val theta = angleOf(p)
-        sweep = wrap(theta - baseAngle())
+        rawSweep = wrap(theta - baseAngle())
         lastTheta = theta
         phase = Phase.ARC
     }
@@ -81,13 +87,13 @@ class Protractor {
         // Too close to the centre to have a direction: leave the sweep where it was.
         if (centre.distanceTo(p) < 1e-6) return
         val theta = angleOf(p)
-        sweep = (sweep + wrap(theta - lastTheta)).coerceIn(-2.0 * PI, 2.0 * PI)
+        rawSweep = (rawSweep + wrap(theta - lastTheta)).coerceIn(-2.0 * PI, 2.0 * PI)
         lastTheta = theta
     }
 
     /** Abandon a half-drawn arc and wait for another. */
     fun cancelArc() {
-        sweep = 0.0
+        rawSweep = 0.0
         phase = Phase.AWAIT_ARC
     }
 

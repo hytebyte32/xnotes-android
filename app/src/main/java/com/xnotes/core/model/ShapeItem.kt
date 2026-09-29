@@ -471,7 +471,10 @@ class ShapeItem(
      */
     fun movePoint(index: Int, to: Pt) {
         when (shape) {
-            ShapeKind.LINE, ShapeKind.ARROW -> if (index == 0) start = to else end = to
+            ShapeKind.LINE, ShapeKind.ARROW ->
+                // Pulled weakly onto 30, 45 and 90 degree angles, measured from the end that stays put.
+                if (index == 0) start = com.xnotes.core.geometry.AngleSnap.snapEnd(end, to)
+                else end = com.xnotes.core.geometry.AngleSnap.snapEnd(start, to)
             ShapeKind.RECTANGLE, ShapeKind.ELLIPSE, ShapeKind.CIRCLE -> {
                 val corners = editPoints()
                 val opposite = corners[(index + 2) % 4]

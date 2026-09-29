@@ -5,6 +5,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.xnotes.canvas.RulerMath
+import com.xnotes.core.geometry.AngleSnap
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.measure.Measure
 import com.xnotes.core.measure.PointRuler
@@ -152,12 +153,12 @@ class MeasureController(
     fun move(vp: Pt) {
         when (active) {
             Active.PLACING -> {
-                point.dragEnd(toContent(vp))
+                point.dragEnd(AngleSnap.snapEnd(point.start, toContent(vp)))
                 rev++
             }
             Active.POINT_PART -> pointMove(toContent(vp))
             Active.PROT_BASE -> {
-                protractor.dragBaseline(toContent(vp))
+                protractor.dragBaseline(AngleSnap.snapEnd(protractor.centre, toContent(vp)))
                 rev++
             }
             Active.PROT_ARC -> {
@@ -248,11 +249,13 @@ class MeasureController(
         val snap = partStart ?: return
         point.restore(snap)
         when (p) {
-            PointRulerPart.START, PointRulerPart.END -> point.moveEnd(p, at)
+            PointRulerPart.START -> point.moveEnd(p, AngleSnap.snapEnd(point.end, at))
+            PointRulerPart.END -> point.moveEnd(p, AngleSnap.snapEnd(point.start, at))
             PointRulerPart.BODY -> point.translate(at.x - grab.x, at.y - grab.y)
             PointRulerPart.ROTATE -> {
                 val c = point.start
                 point.rotateBy(atan2(at.y - c.y, at.x - c.x) - grabAngle)
+                point.moveEnd(PointRulerPart.END, AngleSnap.snapEnd(point.start, point.end))
             }
         }
         rev++
