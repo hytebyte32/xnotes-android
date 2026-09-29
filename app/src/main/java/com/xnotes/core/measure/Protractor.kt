@@ -91,6 +91,66 @@ class Protractor {
         lastTheta = theta
     }
 
+    // --- editing a placed protractor ---
+
+    enum class Part { ARM1, ARM2, BODY }
+
+    /** Free end of the second arm: where the arc stops. */
+    fun arm2End(): Pt {
+        val a = baseAngle() + sweep
+        return Pt(centre.x + radius * cos(a), centre.y + radius * sin(a))
+    }
+
+    /**
+     * The part [p] lands on within [tol]: an arm end (either), or else the vertex, an arm or the arc
+     * itself, which move the whole tool. Null when nothing is near.
+     */
+    fun hit(p: Pt, tol: Double): Part? {
+        if (phase != Phase.ARC && phase != Phase.AWAIT_ARC) return null
+        val arc = phase == Phase.ARC
+        if (arc && p.distanceTo(arm2End()) <= tol) return Part.ARM2
+        if (p.distanceTo(baseEnd) <= tol) return Part.ARM1
+        if (p.distanceTo(centre) <= tol) return Part.BODY
+        if (com.xnotes.core.geometry.Geometry.distancePointToSegment(p, centre, baseEnd) <= tol) return Part.BODY
+        if (arc) {
+            if (com.xnotes.core.geometry.Geometry.distancePointToSegment(p, centre, arm2End()) <= tol) return Part.BODY
+            val pts = arcPoints(4.0)
+            for (i in 0 until pts.size - 1) {
+                if (com.xnotes.core.geometry.Geometry.distancePointToSegment(p, pts[i], pts[i + 1]) <= tol) return Part.BODY
+            }
+        }
+        return null
+    }
+
+    private var radiusGrab = 0.0
+
+    /** Start dragging the second arm from [p], so the handle does not jump to the pen. */
+    fun beginArm2(p: Pt) {
+        lastTheta = angleOf(p)
+        radiusGrab = radius - centre.distanceTo(p)
+    }
+
+    /** Drag the second arm: its angle and its length both follow the pen. */
+    fun dragArm2(p: Pt) {
+        radius = maxOf(centre.distanceTo(p) + radiusGrab, 1.0)
+        dragArc(p)
+    }
+
+    /** Drag the first arm's end to [p] (weakly snapped), leaving the second arm where it is on the page. */
+    fun moveArm1(p: Pt) {
+        val before = baseAngle()
+        baseEnd = com.xnotes.core.geometry.AngleSnap.snapEnd(centre, p)
+        if (phase == Phase.ARC) {
+            rawSweep = (rawSweep - wrap(baseAngle() - before)).coerceIn(-2.0 * PI, 2.0 * PI)
+        }
+    }
+
+    /** Put the vertex and first arm end at [c] and [b]; the arc and second arm follow, being relative. */
+    fun placeBase(c: Pt, b: Pt) {
+        centre = c
+        baseEnd = b
+    }
+
     /** Abandon a half-drawn arc and wait for another. */
     fun cancelArc() {
         rawSweep = 0.0

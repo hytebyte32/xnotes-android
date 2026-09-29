@@ -3,18 +3,15 @@ package com.xnotes.core.measure
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Pt
 import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
 
 /** Which part of a [PointRuler] a press landed on. */
-enum class PointRulerPart { START, END, ROTATE, BODY }
+enum class PointRulerPart { START, END, BODY }
 
 /**
  * The two-point ruler: a start and an end set on the content, showing the distance between them.
  *
  * The points live in content space, so the line scrolls and zooms with the canvas and its reading
- * does not change with the view. Measurements are always taken from [start], which is also the
- * point the whole ruler turns about.
+ * does not change with the view.
  *
  * Pure Kotlin, no view and no renderer, so all of it unit-tests.
  */
@@ -39,9 +36,6 @@ class PointRuler {
 
     /** Angle of the line, radians, from +x. */
     fun angle(): Double = atan2(end.y - start.y, end.x - start.x)
-
-    /** Where the rotate grip sits: [arm] px off the line at its middle. */
-    fun rotateGrip(arm: Double): Pt = (start + end) * 0.5 + direction().perp() * arm
 
     fun clear() {
         placed = false
@@ -71,12 +65,10 @@ class PointRuler {
     fun hit(
         p: Pt,
         tol: Double,
-        gripArm: Double,
         bodyTol: Double = tol,
         allowBody: Boolean = true,
     ): PointRulerPart? {
         if (!placed) return null
-        if (p.distanceTo(rotateGrip(gripArm)) <= tol) return PointRulerPart.ROTATE
         if (p.distanceTo(start) <= tol) return PointRulerPart.START
         if (p.distanceTo(end) <= tol) return PointRulerPart.END
         if (allowBody && Geometry.distancePointToSegment(p, start, end) <= bodyTol) return PointRulerPart.BODY
@@ -92,14 +84,6 @@ class PointRuler {
     /** Drag one end to [p]. */
     fun moveEnd(part: PointRulerPart, p: Pt) {
         if (part == PointRulerPart.START) start = p else end = p
-    }
-
-    /** Turn the whole ruler about its start by [delta] radians. */
-    fun rotateBy(delta: Double) {
-        val cs = cos(delta)
-        val sn = sin(delta)
-        val v = end - start
-        end = Pt(start.x + v.x * cs - v.y * sn, start.y + v.x * sn + v.y * cs)
     }
 
     /** Capture the line so a drag can be measured against its start and cannot compound. */

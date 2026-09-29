@@ -1101,6 +1101,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         controller.measureUp = { measure.up() }
         measure.onProtractor = { c, b, arc, label -> controller.commitProtractor(c, b, arc, label) }
         measure.onRuler = { a, b, label -> controller.commitRuler(a, b, label) }
+        measure.ink = { controller.inkColor.toArgb() }
         view.input = { ev ->
             // Any fresh canvas touch quietly retires the flow action bar and still does its job.
             if (ev.actionMasked == android.view.MotionEvent.ACTION_DOWN) {

@@ -178,6 +178,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     )
 
     init {
+        measure.ink = { inkColor.toArgb() }
         measure.onProtractor = { centre, baseEnd, arc, label ->
             val ink = inkColor
             val w = shapeConfig.strokeWidth * InteractionController.SHAPE_PEN_PARITY

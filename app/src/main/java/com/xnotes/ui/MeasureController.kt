@@ -12,7 +12,6 @@ import com.xnotes.core.measure.PointRuler
 import com.xnotes.core.measure.PointRulerPart
 import com.xnotes.core.measure.Protractor
 import com.xnotes.core.measure.RulerMode
-import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
 
@@ -64,6 +63,9 @@ class MeasureController(
 
     var useInches by mutableStateOf(false)
 
+    /** The pen colour, packed ARGB, that the overlay draws in; each canvas points this at its own ink. */
+    var ink: () -> Int = { 0xFF262626.toInt() }
+
     val zoom: Double get() = zoomNow()
     val dpi: Int get() = documentDpi()
     val size: Pair<Double, Double> get() = viewportSize()
@@ -107,12 +109,6 @@ class MeasureController(
         if (mode != RulerMode.OFF) rev++
     }
 
-    /** Where the ruler's rotate grip sits off the middle of its strip, in viewport pixels. */
-    fun gripArmPx(): Double = (STRIP_DP / 2.0 + GRIP_GAP_DP) * density
-
-    /** The ruler strip's full thickness, in viewport pixels. */
-    fun stripPx(): Double = STRIP_DP * density
-
     // --- keeping a measurement ---
 
     /** Glyph height for a saved reading: about half a real centimetre. */
@@ -135,16 +131,17 @@ class MeasureController(
 
     // --- touch ---
 
-    private enum class Active { NONE, PLACING, POINT_PART, PROT_BASE, PROT_ARC }
+    private enum class Active { NONE, PLACING, POINT_PART, PROT_BASE, PROT_ARC, PROT_PART }
 
     private var active = Active.NONE
     private var part: PointRulerPart? = null
     private var partStart: PointRuler.Snapshot? = null
     private var grab = Pt.ZERO
-    private var grabAngle = 0.0
+    private var protPart: Protractor.Part? = null
+    private var protBase: Pair<Pt, Pt>? = null
 
     /** A press at viewport [vp]. True when a tool took it, which then drives the gesture. */
-    fun down(vp: Pt, finger: Boolean): Boolean = when (mode) {
+    fun down(vp: Pt, finger: Boolean): Boolean = if (finger) false else when (mode) {
         RulerMode.OFF -> false
         RulerMode.TWO_POINT -> pointDown(vp, finger)
         RulerMode.PROTRACTOR -> protractorDown(vp)
@@ -165,6 +162,7 @@ class MeasureController(
                 protractor.dragArc(toContent(vp))
                 rev++
             }
+            Active.PROT_PART -> protMove(toContent(vp))
             Active.NONE -> Unit
         }
     }
@@ -176,11 +174,21 @@ class MeasureController(
         active = Active.NONE
         part = null
         partStart = null
+        protPart = null
+        protBase = null
         rev++
     }
 
     private fun protractorDown(vp: Pt): Boolean {
         val at = toContent(vp)
+        protractor.hit(at, HIT_DP * density / zoomNow())?.let { hit ->
+            protPart = hit
+            protBase = protractor.centre to protractor.baseEnd
+            grab = at
+            if (hit == Protractor.Part.ARM2) protractor.beginArm2(at)
+            active = Active.PROT_PART
+            return true
+        }
         when (protractor.phase) {
             Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> {
                 protractor.beginBaseline(at)
@@ -193,6 +201,21 @@ class MeasureController(
         }
         rev++
         return true
+    }
+
+    private fun protMove(at: Pt) {
+        when (protPart) {
+            Protractor.Part.ARM1 -> protractor.moveArm1(at)
+            Protractor.Part.ARM2 -> protractor.dragArm2(at)
+            Protractor.Part.BODY -> {
+                val (c, b) = protBase ?: return
+                val dx = at.x - grab.x
+                val dy = at.y - grab.y
+                protractor.placeBase(Pt(c.x + dx, c.y + dy), Pt(b.x + dx, b.y + dy))
+            }
+            null -> Unit
+        }
+        rev++
     }
 
     /** The pen came up: a sliver is dropped; a real sweep stays on screen, adjustable, until the tool is left. */
@@ -227,19 +250,14 @@ class MeasureController(
             return true
         }
         val z = zoomNow()
-        // A pen never grabs the line itself, so drawing right along it is still drawing.
         val hit = point.hit(
             at,
             HIT_DP * density / z,
-            gripArmPx() / z,
-            bodyTol = stripPx() / 2.0 / z,
-            allowBody = finger,
+            bodyTol = HIT_DP * density / z,
         ) ?: return false
         part = hit
         partStart = point.snapshot()
         grab = at
-        val c = point.start
-        grabAngle = atan2(at.y - c.y, at.x - c.x)
         active = Active.POINT_PART
         return true
     }
@@ -252,11 +270,6 @@ class MeasureController(
             PointRulerPart.START -> point.moveEnd(p, AngleSnap.snapEnd(point.end, at))
             PointRulerPart.END -> point.moveEnd(p, AngleSnap.snapEnd(point.start, at))
             PointRulerPart.BODY -> point.translate(at.x - grab.x, at.y - grab.y)
-            PointRulerPart.ROTATE -> {
-                val c = point.start
-                point.rotateBy(atan2(at.y - c.y, at.x - c.x) - grabAngle)
-                point.moveEnd(PointRulerPart.END, AngleSnap.snapEnd(point.start, point.end))
-            }
         }
         rev++
     }
@@ -264,12 +277,6 @@ class MeasureController(
     companion object {
         /** How near a handle a press has to land, in dp. */
         const val HIT_DP = 14.0
-
-        /** The ruler strip's thickness, in dp. */
-        const val STRIP_DP = 44.0
-
-        /** How far the rotate grip sits clear of the strip's edge, in dp. */
-        const val GRIP_GAP_DP = 22.0
 
         /** Shortest two-point line kept when placed, in dp. */
         const val MIN_LINE_DP = 12.0

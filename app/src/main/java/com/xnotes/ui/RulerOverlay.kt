@@ -82,7 +82,7 @@ fun RulerOverlay(measure: MeasureController) {
             val hint = when (phase) {
                 Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> "Press the centre and drag out the baseline"
                 Protractor.Phase.AWAIT_ARC -> "Now draw the arc from the baseline  \u2022  tap here to start over"
-                Protractor.Phase.ARC -> "New protractor  \u2022  or drag to redraw the arc"
+                Protractor.Phase.ARC -> "New protractor  \u2022  drag a handle or the lines to adjust"
             }
             if (hint.isNotEmpty()) {
                 Box(
@@ -101,9 +101,6 @@ fun RulerOverlay(measure: MeasureController) {
 }
 
 private val HALO = Color(0xF2FFFFFF)
-private val BAND_FILL = Color(0x80FFFFFF)
-private val BAND_EDGE = Color(0xFF6B6B6B)
-private val BAND_TICK = Color(0xFF262626)
 
 private val METRIC_STEPS = doubleArrayOf(
     0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0,
@@ -128,73 +125,57 @@ private fun graduation(m: MeasureController, density: Float): Graduation {
 
 private fun Pt.o() = Offset(x.toFloat(), y.toFloat())
 
+/** Halo colour that keeps [ink] readable: light round dark ink, dark round light ink. */
+private fun haloFor(ink: Color): Color {
+    val lum = 0.299f * ink.red + 0.587f * ink.green + 0.114f * ink.blue
+    return if (lum > 0.6f) Color(0xE6202020) else HALO
+}
+
 /**
- * The two-point ruler, dressed as a frosted strip along the line: a translucent body, a line along
- * each edge, real-unit graduations on both edges counted from the start, a handle at each end, a
- * grip beside it that turns it about the start, and its reading past the far end.
+ * The two-point ruler: a plain line between its two points in the pen colour, a round handle at
+ * each end, real-unit ticks across the line counted from the start, and the reading past the far end.
  */
 private fun DrawScope.drawPointRuler(m: MeasureController, density: Float, paint: Paint) {
     val r = m.point
     if (r.lengthPx <= 0.0) return
+    val ink = Color(m.ink()).copy(alpha = 1f)
+    val halo = haloFor(ink)
     val a = m.toViewportPt(r.start)
     val b = m.toViewportPt(r.end)
     val lenV = a.distanceTo(b)
     if (lenV < 1e-6) return
     val d = Pt((b.x - a.x) / lenV, (b.y - a.y) / lenV)
     val n = d.perp()
-    val ht = m.stripPx() / 2.0
+    val lineW = 1.8f * density
 
-    // Body and edges.
-    val q0 = a + n * ht
-    val q1 = b + n * ht
-    val q2 = b - n * ht
-    val q3 = a - n * ht
-    val body = Path().apply {
-        moveTo(q0.x.toFloat(), q0.y.toFloat())
-        lineTo(q1.x.toFloat(), q1.y.toFloat())
-        lineTo(q2.x.toFloat(), q2.y.toFloat())
-        lineTo(q3.x.toFloat(), q3.y.toFloat())
-        close()
-    }
-    drawPath(body, BAND_FILL)
-    val edgeW = 1.2f * density
-    drawLine(BAND_EDGE, q0.o(), q1.o(), strokeWidth = edgeW)
-    drawLine(BAND_EDGE, q3.o(), q2.o(), strokeWidth = edgeW)
-    drawLine(BAND_EDGE, q0.o(), q3.o(), strokeWidth = edgeW)
-    drawLine(BAND_EDGE, q1.o(), q2.o(), strokeWidth = edgeW)
+    drawLine(halo, a.o(), b.o(), strokeWidth = lineW + 3f * density)
+    drawLine(ink, a.o(), b.o(), strokeWidth = lineW)
 
-    // Graduations on both long edges, zero at the start.
+    // Ticks across the line, zero at the start; the long ones carry their number.
     val g = graduation(m, density)
     val count = min((lenV / g.stepPx).toInt(), 4000)
     val nc = drawContext.canvas.nativeCanvas
     paint.textSize = 11f * density
+    val major = 8f * density
+    val minor = 4.5f * density
     for (i in 0..count) {
         val mid = a + d * (i * g.stepPx)
-        val major = i % g.labelEvery == 0
-        val len = if (major) ht * 0.46 else ht * 0.22
-        val top = mid + n * ht
-        val bot = mid - n * ht
-        drawLine(BAND_TICK, top.o(), (top - n * len).o(), strokeWidth = 1.1f * density)
-        drawLine(BAND_TICK, bot.o(), (bot + n * len).o(), strokeWidth = 1.1f * density)
-        if (major) outlinedText(nc, paint, trimmed(i * g.step), mid.x.toFloat(), mid.y.toFloat(), density, BAND_TICK)
+        val isMajor = i % g.labelEvery == 0
+        val len = (if (isMajor) major else minor).toDouble()
+        drawLine(halo, (mid - n * len).o(), (mid + n * len).o(), strokeWidth = 3.4f * density)
+        drawLine(ink, (mid - n * len).o(), (mid + n * len).o(), strokeWidth = 1.2f * density)
+        if (isMajor && i > 0) {
+            val at = mid + n * (major + 9f * density)
+            outlinedText(nc, paint, trimmed(i * g.step), at.x.toFloat(), at.y.toFloat(), density, ink, haloColor = halo)
+        }
     }
 
-    // End handles, then the rotate grip beside the middle.
+    // A handle at each end.
     val hr = 9f * density
     for (p in listOf(a, b)) {
-        drawCircle(HALO, hr, p.o())
-        drawCircle(BAND_EDGE, hr, p.o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.6f * density))
+        drawCircle(halo, hr, p.o())
+        drawCircle(ink, hr, p.o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.8f * density))
     }
-    val mid = (a + b) * 0.5
-    val grip = mid + n * m.gripArmPx()
-    drawLine(BAND_EDGE, (mid + n * ht).o(), grip.o(), strokeWidth = edgeW)
-    drawCircle(HALO, hr, grip.o())
-    drawCircle(BAND_EDGE, hr, grip.o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.6f * density))
-    paint.textSize = 12f * density
-    outlinedText(nc, paint, "↻", grip.x.toFloat(), grip.y.toFloat(), density, BAND_TICK, halo = false)
-
-    // The zero point, marked with a crosshair along the strip's own axes.
-    crosshair(a.o(), Offset(d.x.toFloat(), d.y.toFloat()), Offset(n.x.toFloat(), n.y.toFloat()), 10f * density, density, BAND_TICK)
 
     // The reading, past the far end along the line.
     var deg = -Math.toDegrees(r.angle())
@@ -202,17 +183,7 @@ private fun DrawScope.drawPointRuler(m: MeasureController, density: Float, paint
     val reading = Measure.format(r.lengthPx, m.dpi, m.useInches) + "   " + "%.1f°".format(deg)
     paint.textSize = 15f * density
     val off = hr + 14f * density + paint.measureText(reading) / 2f
-    outlinedText(nc, paint, reading, (b.x + d.x * off).toFloat(), (b.y + d.y * off).toFloat(), density, BAND_TICK)
-}
-
-/** A small cross on [c] along the two axes [u] and [v], over a halo so it reads on any ground. */
-private fun DrawScope.crosshair(c: Offset, u: Offset, v: Offset, arm: Float, density: Float, color: Color) {
-    for (axis in listOf(u, v)) {
-        val p1 = Offset(c.x - axis.x * arm, c.y - axis.y * arm)
-        val p2 = Offset(c.x + axis.x * arm, c.y + axis.y * arm)
-        drawLine(HALO, p1, p2, strokeWidth = 3.4f * density)
-        drawLine(color, p1, p2, strokeWidth = 1.4f * density)
-    }
+    outlinedText(nc, paint, reading, (b.x + d.x * off).toFloat(), (b.y + d.y * off).toFloat(), density, ink, haloColor = halo)
 }
 
 /** Text with a light outline, so it reads over ink of any colour. */
@@ -225,13 +196,14 @@ private fun outlinedText(
     density: Float,
     color: Color,
     halo: Boolean = true,
+    haloColor: Color = HALO,
 ) {
     val x = cx - paint.measureText(text) / 2f
     val y = cy + paint.textSize / 3f
     if (halo) {
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 3f * density
-        paint.color = HALO.toArgb()
+        paint.color = haloColor.toArgb()
         nc.drawText(text, x, y, paint)
     }
     paint.style = Paint.Style.FILL
@@ -243,13 +215,16 @@ private fun trimmed(v: Double): String =
     if (v == floor(v)) v.toLong().toString() else "%.4f".format(v).trimEnd('0').trimEnd('.')
 
 /**
- * The protractor in the same dress: a frosted wedge from the baseline round to the arc, dark edge
+ * The protractor in the same dress: a faint wedge from the baseline round to the arc, dark edge
  * lines, degree graduations along the arc, handles on the centre and baseline end, and the angle
  * beside the vertex rather than out at the rim.
  */
 private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint: Paint) {
     val p = m.protractor
     if (p.phase == Protractor.Phase.IDLE) return
+    val ink = Color(m.ink()).copy(alpha = 1f)
+    val halo = haloFor(ink)
+    val fillC = ink.copy(alpha = 0.12f)
     val c = m.toViewportPt(p.centre)
     val b = m.toViewportPt(p.baseEnd)
     val nc = drawContext.canvas.nativeCanvas
@@ -268,14 +243,17 @@ private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint
             for (q in pts) lineTo(q.x.toFloat(), q.y.toFloat())
             close()
         }
-        drawPath(fill, BAND_FILL)
+        drawPath(fill, fillC)
         val arcPath = Path().apply {
             moveTo(pts[0].x.toFloat(), pts[0].y.toFloat())
             for (i in 1 until pts.size) lineTo(pts[i].x.toFloat(), pts[i].y.toFloat())
         }
-        drawPath(arcPath, HALO, style = androidx.compose.ui.graphics.drawscope.Stroke(edgeW + 3f * density))
-        drawPath(arcPath, BAND_EDGE, style = androidx.compose.ui.graphics.drawscope.Stroke(edgeW))
-        drawLine(BAND_EDGE, c.o(), pts.last().o(), strokeWidth = edgeW, pathEffect = dots)
+        drawPath(arcPath, halo, style = androidx.compose.ui.graphics.drawscope.Stroke(edgeW + 3f * density))
+        drawPath(arcPath, ink, style = androidx.compose.ui.graphics.drawscope.Stroke(edgeW))
+        drawLine(halo, c.o(), pts.last().o(), strokeWidth = edgeW + 3f * density)
+        drawLine(ink, c.o(), pts.last().o(), strokeWidth = edgeW, pathEffect = dots)
+        drawCircle(halo, hr, pts.last().o())
+        drawCircle(ink, hr, pts.last().o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.6f * density))
 
         // Degree graduations inward from the arc: every degree the size allows, every ten longer.
         val radiusV = p.radius * m.zoom
@@ -294,33 +272,33 @@ private fun DrawScope.drawProtractor(m: MeasureController, density: Float, paint
             val dir = Pt(cos(ang), sin(ang))
             val len = (if (deg % 10 == 0) 0.09 else 0.045) * radiusV
             val outer = c + dir * radiusV
-            drawLine(BAND_TICK, outer.o(), (outer - dir * len).o(), strokeWidth = 1.1f * density)
+            drawLine(ink, outer.o(), (outer - dir * len).o(), strokeWidth = 1.1f * density)
             deg += stepDeg
         }
     }
 
     // The baseline, drawn as a strip edge would be, with handles on both ends.
-    drawLine(HALO, c.o(), b.o(), strokeWidth = edgeW + 3f * density)
-    drawLine(BAND_EDGE, c.o(), b.o(), strokeWidth = edgeW, pathEffect = dots)
-    drawCircle(HALO, hr, b.o())
-    drawCircle(BAND_EDGE, hr, b.o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.6f * density))
+    drawLine(halo, c.o(), b.o(), strokeWidth = edgeW + 3f * density)
+    drawLine(ink, c.o(), b.o(), strokeWidth = edgeW, pathEffect = dots)
+    drawCircle(halo, hr, b.o())
+    drawCircle(ink, hr, b.o(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.6f * density))
     // The origin, marked with an X.
     val xa = 8f * density
     for (s in listOf(1f, -1f)) {
         val p1 = Offset(co.x - xa, co.y - xa * s)
         val p2 = Offset(co.x + xa, co.y + xa * s)
-        drawLine(HALO, p1, p2, strokeWidth = 3.6f * density)
-        drawLine(BAND_TICK, p1, p2, strokeWidth = 1.6f * density)
+        drawLine(halo, p1, p2, strokeWidth = 3.6f * density)
+        drawLine(ink, p1, p2, strokeWidth = 1.6f * density)
     }
 
     if (wedge != null) {
-        // The angle beside the vertex, along the bisector, clear of the crosshair.
+        // The angle beside the vertex, along the bisector, clear of the X.
         val mid = p.baseAngle() + p.sweep / 2.0
         val radiusV = p.radius * m.zoom
         val dist = minOf(38.0 * density, radiusV * 0.6).coerceAtLeast(22.0 * density)
         val t = Pt(c.x + cos(mid) * dist, c.y + sin(mid) * dist)
         paint.textSize = 17f * density
         val text = "%.${m.protractorDecimals}f°".format(p.angleDegrees())
-        outlinedText(nc, paint, text, t.x.toFloat(), t.y.toFloat(), density, BAND_TICK)
+        outlinedText(nc, paint, text, t.x.toFloat(), t.y.toFloat(), density, ink, haloColor = halo)
     }
 }
