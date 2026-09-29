@@ -165,7 +165,7 @@ private fun DrawScope.drawPointRuler(m: MeasureController, density: Float, paint
         drawLine(halo, (mid - n * len).o(), (mid + n * len).o(), strokeWidth = 3.4f * density)
         drawLine(ink, (mid - n * len).o(), (mid + n * len).o(), strokeWidth = 1.2f * density)
         if (isMajor && i > 0) {
-            val at = mid + n * (major + 9f * density)
+            val at = mid + n * (major + 9f * density).toDouble()
             outlinedText(nc, paint, trimmed(i * g.step), at.x.toFloat(), at.y.toFloat(), density, ink, haloColor = halo)
         }
     }
