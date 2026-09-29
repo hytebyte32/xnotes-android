@@ -157,6 +157,10 @@ object XnotesIcons {
     val protractor = icon(
         "M3 16.5a9 9 0 0 1 18 0Z", "M12 16.5v-3", "M6.4 12.1 8.5 13.7", "M17.6 12.1 15.5 13.7",
     )
+    // Ruler lock glyphs: a double arrow for length, a turn arrow for rotation, a four-way move for position.
+    val lockLength = icon("M4 12h16", "M7 8.5 3.5 12 7 15.5", "M17 8.5 20.5 12 17 15.5")
+    val lockRotation = icon("M21 12a9 9 0 1 1-3-6.7L21 8", "M21 3v5h-5")
+    val lockPosition = icon("M12 2v20", "M2 12h20", "M9 5l3-3 3 3", "M9 19l3 3 3-3", "M5 9l-3 3 3 3", "M19 9l3 3-3 3")
     val magicWand = icon(
         "m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72Z",
         "M14 7 17 10", "M5 6v4", "M19 14v4", "M10 2v2", "M7 8H3", "M21 16h-4", "M11 3H9",

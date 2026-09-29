@@ -7,6 +7,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.border
+import androidx.compose.ui.draw.shadow
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.size
+import com.xnotes.ui.icons.XnotesIcons
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -61,28 +66,81 @@ fun RulerOverlay(measure: MeasureController) {
                 RulerMode.OFF -> Unit
             }
         }
-        Row(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp),
-            horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (mode == RulerMode.TWO_POINT) {
-                if (measure.point.placed) {
-                    PillButton("Length", measure.lockLength) { measure.lockLength = !measure.lockLength }
-                    PillButton("Rotation", measure.lockRotation) { measure.lockRotation = !measure.lockRotation }
-                    PillButton("Position", measure.lockPosition) { measure.lockPosition = !measure.lockPosition }
-                } else {
-                    PillButton("Press and drag to measure", false, null)
-                }
-            } else {
-                val hint = when (measure.protractor.phase) {
-                    Protractor.Phase.IDLE, Protractor.Phase.BASELINE -> "Press the centre and drag out the first arm"
-                    Protractor.Phase.ARC -> "Drag either arm end to set the angle"
-                }
-                PillButton(hint, false, null)
-            }
-            if (measure.canConfirm) PillButton("Confirm", true) { measure.confirm() }
+        val d = density.toDouble()
+        val (vw, vh) = measure.size
+        val btn = 40.0
+        val gap = 8.0
+        // Round buttons in a row centred on ([cx], [cy]) viewport px, kept on screen.
+        @Composable
+        fun ButtonRow(cx: Double, cy: Double, content: @Composable () -> Unit, count: Int) {
+            val w = (count * btn + (count - 1) * gap) * d
+            val x = (cx - w / 2).coerceIn(4.0 * d, maxOf(4.0 * d, vw - w - 4.0 * d))
+            val y = (cy - btn * d / 2).coerceIn(4.0 * d, maxOf(4.0 * d, vh - btn * d - 4.0 * d))
+            Row(
+                modifier = Modifier.offset { androidx.compose.ui.unit.IntOffset(x.toInt(), y.toInt()) },
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(gap.dp),
+            ) { content() }
         }
+        if (mode == RulerMode.TWO_POINT && measure.point.placed) {
+            val a = measure.toViewportPt(measure.point.start)
+            val b = measure.toViewportPt(measure.point.end)
+            // Centred under the ruler, on whichever side of the line faces down the screen.
+            val len = a.distanceTo(b).coerceAtLeast(1e-6)
+            var nx = -(b.y - a.y) / len
+            var ny = (b.x - a.x) / len
+            if (ny < 0) { nx = -nx; ny = -ny }
+            val off = (34.0 + btn / 2 + 8.0) * d
+            val cx = (a.x + b.x) / 2 + nx * off
+            val cy = (a.y + b.y) / 2 + ny * off
+            ButtonRow(cx, cy, count = 4, content = {
+                CircleButton(XnotesIcons.lockLength, measure.lockLength) { measure.lockLength = !measure.lockLength }
+                CircleButton(XnotesIcons.lockRotation, measure.lockRotation) { measure.lockRotation = !measure.lockRotation }
+                CircleButton(XnotesIcons.lockPosition, measure.lockPosition) { measure.lockPosition = !measure.lockPosition }
+                CircleButton(XnotesIcons.check, true, accent = Color(0xFF1B8A3A)) { measure.confirm() }
+            })
+        }
+        if (mode == RulerMode.PROTRACTOR && measure.canConfirm) {
+            val p = measure.protractor
+            val c = measure.toViewportPt(p.centre)
+            // Just behind the vertex, opposite the middle of the wedge, clear of the angle readout.
+            val mid = p.baseAngle() + p.sweep / 2.0
+            val off = (btn / 2 + 26.0) * d
+            ButtonRow(c.x - cos(mid) * off, c.y - sin(mid) * off, count = 1, content = {
+                CircleButton(XnotesIcons.check, true, accent = Color(0xFF1B8A3A)) { measure.confirm() }
+            })
+        }
+        if (mode == RulerMode.PROTRACTOR || !measure.point.placed) {
+            val hint = when {
+                mode == RulerMode.TWO_POINT -> "Press and drag to measure"
+                measure.protractor.phase == Protractor.Phase.ARC -> "Drag either arm end to set the angle"
+                else -> "Press the centre and drag out the first arm"
+            }
+            Box(Modifier.align(Alignment.BottomCenter).padding(bottom = 18.dp)) { PillButton(hint, false, null) }
+        }
+    }
+}
+
+/** A 40dp round button with a solid fill, a strong rim and a shadow, so it reads on any paper. Filled dark when [on]; [accent] overrides the fill (confirm). */
+@Composable
+private fun CircleButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    on: Boolean,
+    accent: Color? = null,
+    onClick: () -> Unit,
+) {
+    val fill = accent ?: if (on) Color(0xFF111111) else Color.White
+    val glyph = if (accent != null || on) Color.White else Color(0xFF111111)
+    val rim = if (accent != null) Color(0xFFFFFFFF) else if (on) Color(0xFFFFFFFF) else Color(0xFF111111)
+    Box(
+        modifier = Modifier
+            .size(40.dp)
+            .shadow(6.dp, androidx.compose.foundation.shape.CircleShape)
+            .background(fill, androidx.compose.foundation.shape.CircleShape)
+            .border(2.dp, rim, androidx.compose.foundation.shape.CircleShape)
+            .clickable { onClick() },
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Icon(icon, null, tint = glyph, modifier = Modifier.size(22.dp))
     }
 }
 
