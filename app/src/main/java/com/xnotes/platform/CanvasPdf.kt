@@ -8,6 +8,7 @@ import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.xnotes.core.infinite.BackgroundPattern
+import com.xnotes.core.infinite.CanvasPagination
 import com.xnotes.core.infinite.CanvasPdfLayout
 import com.xnotes.core.infinite.InfiniteDocument
 import com.xnotes.core.infinite.isFinite
@@ -19,10 +20,11 @@ import com.xnotes.core.pal.Renderer
 import java.io.OutputStream
 
 /**
- * Flattens an infinite canvas into a one-page PDF, the canvas counterpart of [PdfExporter].
+ * Flattens an infinite canvas into a PDF, the canvas counterpart of [PdfExporter].
  *
- * There is nothing to paginate, so the page is cut to the drawing ([CanvasPdfLayout]) and everything
- * goes on it in one pass. What lands there is vector: the items are the same [CanvasItem]s the paged
+ * The canvas is cut into pages by [CanvasPagination]: page boundaries only fall in empty gaps between
+ * what you drew, whole blocks of work are packed onto each page, and one too tall for a page is
+ * shrunk to fit rather than split. What lands there is vector: the items are the same [CanvasItem]s the paged
  * note holds, so they paint themselves through [PdfBoxRenderer] and the ink stays real paths rather
  * than a screenshot of the canvas. The GL pipeline that draws them live is not involved at all — its
  * meshes are a render artifact, and reading pixels back off the GPU would give a raster of whatever
@@ -51,63 +53,52 @@ object CanvasPdfExporter {
         isCancelled: () -> Boolean = { false },
     ) {
         PDFBoxResourceLoader.init(context.applicationContext)
-        val layout = CanvasPdfLayout.of(doc.contentBounds(), doc.dpi)
-        // A non-finite item is outside the page by construction (contentBounds skips it too), and
+        // A non-finite item is outside every page by construction (contentBounds skips it too), and
         // drawn anyway it would put a NaN coordinate into the content stream and corrupt the file.
         val items = doc.items.filter { it.paintBounds().isFinite() }
-        onProgress(0, items.size)
+        val bounds = items.map { it.paintBounds() }
+        val pages = CanvasPagination.plan(bounds, doc.dpi, doc.originX, doc.originY, doc.limitW, doc.limitH)
+        // Which page each item is last needed on, so its geometry is freed as soon as that page is done.
+        val lastPage = IntArray(items.size) { i -> pages.indexOfLast { it.cover.intersects(bounds[i]) } }
+        val visits = items.indices.sumOf { i -> pages.count { it.cover.intersects(bounds[i]) } }
+        onProgress(0, visits)
         val mem = MemoryUsageSetting.setupMixed(SCRATCH_MAIN_MEM_BYTES).setTempDir(context.cacheDir)
         val outDoc = PDDocument(mem)
+        var done = 0
         try {
-            val wPts = layout.widthPoints.toFloat()
-            val hPts = layout.heightPoints.toFloat()
-            val page = PDPage(PDRectangle(wPts, hPts))
-            outDoc.addPage(page)
-            PDPageContentStream(outDoc, page).use { cs ->
-                cs.setNonStrokingColor(paperColor.r / 255f, paperColor.g / 255f, paperColor.b / 255f)
-                cs.addRect(0f, 0f, wPts, hPts)
-                cs.fill()
-                if (!paintContent(cs, outDoc, doc, items, layout, hPts, onProgress, isCancelled)) return
+            for ((pi, pg) in pages.withIndex()) {
+                val wPts = pg.widthPoints.toFloat()
+                val hPts = pg.heightPoints.toFloat()
+                val page = PDPage(PDRectangle(wPts, hPts))
+                outDoc.addPage(page)
+                PDPageContentStream(outDoc, page).use { cs ->
+                    cs.setNonStrokingColor(paperColor.r / 255f, paperColor.g / 255f, paperColor.b / 255f)
+                    cs.addRect(0f, 0f, wPts, hPts)
+                    cs.fill()
+                    val layout = CanvasPdfLayout.Layout(pg.cover, pg.scale)
+                    val r = PdfBoxRenderer(cs, outDoc, -pg.cover.left * pg.scale, hPts + pg.cover.top * pg.scale, pg.scale)
+                    paintRuling(doc, r, layout)
+                    for ((index, item) in items.withIndex()) {
+                        if (!pg.cover.intersects(bounds[index])) continue
+                        if (isCancelled()) return
+                        if (PdfItemRaster.needsRaster(item)) {
+                            PdfItemRaster.item(item, pg.cover)?.let { raster ->
+                                r.drawItemBitmap(raster.bmp, raster.rect, raster.multiply)
+                                raster.bmp.recycle()
+                            }
+                        } else {
+                            item.paint(r)
+                        }
+                        // Let the ribbon go once the last page that needs it is past it.
+                        if (lastPage[index] == pi) PdfItemRaster.releaseInkGeometry(item)
+                        onProgress(++done, visits)
+                    }
+                }
             }
             outDoc.save(out)
         } finally {
             outDoc.runCatching { close() }
         }
-    }
-
-    /** Ruling then items in z-order. False when the export was cancelled part-way. */
-    private fun paintContent(
-        cs: PDPageContentStream,
-        outDoc: PDDocument,
-        doc: InfiniteDocument,
-        items: List<CanvasItem>,
-        layout: CanvasPdfLayout.Layout,
-        hPts: Float,
-        onProgress: (Int, Int) -> Unit,
-        isCancelled: () -> Boolean,
-    ): Boolean {
-        val cover = layout.cover
-        val s = layout.scale
-        // Map the cover's top-left corner onto the page's, in the (translate + axis scale) form
-        // PdfBoxRenderer takes: user = (ox + x·s, oy − y·s).
-        val r = PdfBoxRenderer(cs, outDoc, -cover.left * s, hPts + cover.top * s, s)
-        paintRuling(doc, r, layout)
-        items.forEachIndexed { index, item ->
-            if (isCancelled()) return false
-            if (PdfItemRaster.needsRaster(item)) {
-                PdfItemRaster.item(item, cover)?.let { raster ->
-                    r.drawItemBitmap(raster.bmp, raster.rect, raster.multiply)
-                    raster.bmp.recycle()
-                }
-            } else {
-                item.paint(r)
-            }
-            // Let the ribbon go the moment the single pass is past it, so a dense canvas's whole
-            // worth of geometry is never resident at once — least of all during the write below.
-            PdfItemRaster.releaseInkGeometry(item)
-            onProgress(index + 1, items.size)
-        }
-        return !isCancelled()
     }
 
     /**
