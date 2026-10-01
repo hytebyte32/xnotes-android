@@ -5272,6 +5272,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     override fun deleteSelection() = controller.deleteSelection()
     fun selectAll() = controller.selectAll()
     override fun bringToFront() = controller.bringToFront()
+    override fun reorderSelection(move: com.xnotes.core.infinite.ZMove) = controller.reorderSelection(move)
     override fun selectionStyles() = controller.selectionStyles()
 
     override fun restyleSelection(color: Rgba?, width: Double?, preview: Boolean, dashed: Boolean?) {

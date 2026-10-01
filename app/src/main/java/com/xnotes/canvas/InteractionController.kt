@@ -2327,16 +2327,15 @@ class InteractionController(
         setSelection(all)
     }
 
-    fun bringToFront() {
+    fun bringToFront() = reorderSelection(com.xnotes.core.infinite.ZMove.TO_FRONT)
+
+    fun reorderSelection(move: com.xnotes.core.infinite.ZMove) {
         if (selection.isEmpty()) return
         val byPage = selection.groupBy { it.pageIndex }
         for ((pageIndex, sels) in byPage) {
             val page = state.document.pages.getOrNull(pageIndex) ?: continue
-            val selectedSet = sels.map { it.item }.toSet()
             val old = page.items.toList()
-            val kept = old.filter { it !in selectedSet }
-            val moved = old.filter { it in selectedSet }
-            val new = kept + moved
+            val new = com.xnotes.core.infinite.reorderItems(old, sels.map { it.item }, move)
             if (new != old) {
                 history.push(ReorderItems(page, old, new))
                 page.items.clear()

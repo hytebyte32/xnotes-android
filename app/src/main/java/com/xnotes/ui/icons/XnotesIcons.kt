@@ -178,6 +178,9 @@ object XnotesIcons {
     val duplicate = icon(roundRect(8.0, 8.0, 14.0, 14.0, 2.0), COPY_BACK_SHEET, "M15 12v6", "M12 15h6")
     /** Bring to front: a stack of plates seen in three-quarter view. The stack is the z-order
      *  itself and the top plate is where the selection is going, with no arrow over it. */
+    val back = icon("M12 17V3", "m6 11 6 6 6-6", "M19 21H5")
+    val forward = icon("m5 12 7-7 7 7", "M12 19V5")
+    val backward = icon("M12 5v14", "m19 12-7 7-7-7")
     val front = icon(
         "M12 2.5 22 7.5 12 12.5 2 7.5Z",
         "M22 12.5 12 17.5 2 12.5",

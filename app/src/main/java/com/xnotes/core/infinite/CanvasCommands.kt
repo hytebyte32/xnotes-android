@@ -153,3 +153,38 @@ class OnCanvas(
         doc.itemsChanged(touched)
     }
 }
+
+/** How the selection moves through the stacking order. */
+enum class ZMove { TO_BACK, BACKWARD, FORWARD, TO_FRONT }
+
+/**
+ * [all] with [selected] moved through the stacking order (last is on top), keeping the selection's
+ * own relative order. A one-step move passes the nearest unselected neighbour, so a multi-item
+ * selection steps together. Compared by identity.
+ */
+fun reorderItems(all: List<CanvasItem>, selected: List<CanvasItem>, move: ZMove): List<CanvasItem> {
+    if (selected.isEmpty()) return all
+    val isSel = { item: CanvasItem -> selected.any { it === item } }
+    return when (move) {
+        ZMove.TO_FRONT -> all.filterNot(isSel) + all.filter(isSel)
+        ZMove.TO_BACK -> all.filter(isSel) + all.filterNot(isSel)
+        ZMove.FORWARD -> {
+            val out = all.toMutableList()
+            for (i in out.size - 2 downTo 0) {
+                if (isSel(out[i]) && !isSel(out[i + 1])) {
+                    val t = out[i]; out[i] = out[i + 1]; out[i + 1] = t
+                }
+            }
+            out
+        }
+        ZMove.BACKWARD -> {
+            val out = all.toMutableList()
+            for (i in 1 until out.size) {
+                if (isSel(out[i]) && !isSel(out[i - 1])) {
+                    val t = out[i]; out[i] = out[i - 1]; out[i - 1] = t
+                }
+            }
+            out
+        }
+    }
+}

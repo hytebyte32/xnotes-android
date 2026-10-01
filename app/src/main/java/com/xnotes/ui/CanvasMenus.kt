@@ -59,6 +59,7 @@ interface SelectionMenuHost {
     fun cutSelection()
     fun copySelection()
     fun bringToFront()
+    fun reorderSelection(move: com.xnotes.core.infinite.ZMove)
     fun duplicateSelection()
     fun dismissSelectionMenu()
 
@@ -140,6 +141,9 @@ fun SelectionMenu(host: SelectionMenuHost) {
         ActionIcon(XnotesIcons.cut, stringResource(R.string.cut)) { host.cutSelection() }
         ActionIcon(XnotesIcons.copy, stringResource(R.string.copy)) { host.copySelection(); host.dismissSelectionMenu() }
         ActionIcon(XnotesIcons.front, stringResource(R.string.bring_to_front)) { host.bringToFront(); host.dismissSelectionMenu() }
+        ActionIcon(XnotesIcons.back, stringResource(R.string.send_to_back)) { host.reorderSelection(com.xnotes.core.infinite.ZMove.TO_BACK); host.dismissSelectionMenu() }
+        ActionIcon(XnotesIcons.forward, stringResource(R.string.bring_forward)) { host.reorderSelection(com.xnotes.core.infinite.ZMove.FORWARD); host.dismissSelectionMenu() }
+        ActionIcon(XnotesIcons.backward, stringResource(R.string.send_backward)) { host.reorderSelection(com.xnotes.core.infinite.ZMove.BACKWARD); host.dismissSelectionMenu() }
         ActionIcon(XnotesIcons.duplicate, stringResource(R.string.duplicate)) { host.duplicateSelection() }
         Box {
             ActionIcon(XnotesIcons.more, stringResource(R.string.more)) { overflowOpen = true }

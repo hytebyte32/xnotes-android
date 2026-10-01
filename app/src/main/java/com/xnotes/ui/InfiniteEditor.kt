@@ -590,10 +590,12 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     /** Put the selection on top. On a flat canvas that is purely a reorder of the item list. */
-    override fun bringToFront() {
+    override fun bringToFront() = reorderSelection(com.xnotes.core.infinite.ZMove.TO_FRONT)
+
+    override fun reorderSelection(move: com.xnotes.core.infinite.ZMove) {
         if (selection.isEmpty) return
         val before = document.items.toList()
-        val after = com.xnotes.core.infinite.bringToFrontOrder(before, selection.items)
+        val after = com.xnotes.core.infinite.reorderItems(before, selection.items, move)
         if (com.xnotes.core.infinite.sameOrder(before, after)) return
         document.replaceAll(after)
         history.push(ReplaceCanvasItems(document, before, after))
