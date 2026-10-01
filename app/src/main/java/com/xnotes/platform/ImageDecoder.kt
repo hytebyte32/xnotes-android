@@ -61,6 +61,35 @@ object ImageDecoder {
         return scaled
     }
 
+    /**
+     * [decodeSampledFile] for on-screen drawing, remembered. A selected image is repainted every frame
+     * while it is dragged or the view moves, and decoding a large photo (or a pasted screenshot) from
+     * disk each time is what makes that lag. The size is rounded up to a power-of-two bucket so a
+     * pinch or a resize reuses one bitmap, and the caller scales it into place. Never upscales past the
+     * native pixels. Image files are immutable temps, so path plus bucket is a sound key.
+     */
+    fun decodeForDisplay(path: String, maxWidth: Int, maxHeight: Int): Bitmap? {
+        if (isVector(path)) return decodeSampledFile(path, maxWidth, maxHeight)
+        val want = max(maxWidth, maxHeight).coerceAtLeast(1)
+        var bucket = DISPLAY_MIN_BUCKET
+        while (bucket < want) bucket *= 2
+        val native = nativeSizes.get(path) ?: probeRaster(path)?.also { nativeSizes.put(path, it) } ?: return null
+        bucket = minOf(bucket, max(native.width, native.height))
+        val key = "$path|$bucket"
+        displayBitmaps.get(key)?.let { return it }
+        val bmp = decodeSampledFile(path, bucket, bucket) ?: return null
+        displayBitmaps.put(key, bmp)
+        return bmp
+    }
+
+    private const val DISPLAY_MIN_BUCKET = 256
+    private val nativeSizes = LruCache<String, ImageSize>(64)
+    private val displayBitmaps = object : LruCache<String, Bitmap>(
+        (Runtime.getRuntime().maxMemory() / 8).coerceAtMost(96L * 1024 * 1024).toInt(),
+    ) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount
+    }
+
     /** True when [path] holds a vector (SVG) source with no native pixel resolution.
      *  Memoized: the sniff opens the file, and a lifted image is re-drawn every frame. */
     fun isVector(path: String): Boolean =
