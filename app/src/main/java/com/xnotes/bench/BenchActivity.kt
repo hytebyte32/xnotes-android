@@ -148,6 +148,7 @@ class BenchActivity : ComponentActivity() {
                 File(filesDir, "crash.txt").writeText("thread ${t.name}\n" + e.stackTraceToString().take(6000) + "\nlast log lines:\n" + (0 until log.length()).toList().takeLast(8).joinToString("\n") { log.getString(it) })
             } catch (_: Throwable) {
             }
+            autosave()
             previous?.uncaughtException(t, e)
         }
     }
@@ -160,11 +161,36 @@ class BenchActivity : ComponentActivity() {
     // --- reporting ---
 
     private val log = JSONArray()
+    private var autosaveUri: android.net.Uri? = null
+    private var lastAutosave = 0L
+
+    /** One partial-results file per run, rewritten as the run goes, so a crash leaves what was measured. */
+    private fun beginAutosave() {
+        if (Build.VERSION.SDK_INT < 29) return
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, "xnotes-bench-partial-${System.currentTimeMillis()}.json")
+            put(MediaStore.Downloads.MIME_TYPE, "application/json")
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/")
+        }
+        autosaveUri = try { contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) } catch (_: Throwable) { null }
+    }
+
+    private fun autosave() {
+        val uri = autosaveUri ?: return
+        try {
+            results.put("log", log)
+            contentResolver.openOutputStream(uri, "wt")?.use { it.write(results.toString(2).toByteArray()) }
+            lastAutosave = SystemClock.elapsedRealtime()
+        } catch (_: Throwable) {
+        }
+    }
+
 
     private fun line(s: String) {
         log.put(s)
         text.append(s).append('\n')
         reportView.text = text
+        if (SystemClock.elapsedRealtime() - lastAutosave > 5000) autosave()
     }
 
     private fun copyReport() {
@@ -193,6 +219,7 @@ class BenchActivity : ComponentActivity() {
         if (job?.isActive == true) return
         text.setLength(0)
         reportView.text = ""
+        beginAutosave()
         job = scope.launch {
             panel.visibility = View.INVISIBLE
             try {
@@ -720,6 +747,7 @@ class BenchActivity : ComponentActivity() {
         if (job?.isActive == true) return
         text.setLength(0)
         reportView.text = ""
+        beginAutosave()
         job = scope.launch {
             panel.visibility = View.INVISIBLE
             try {
@@ -744,7 +772,7 @@ class BenchActivity : ComponentActivity() {
         for (n in listOf(1_000, 10_000, 30_000)) {
             for (cfg in configs()) {
                 try {
-                    grid.put(glCell(cfg, n))
+                    glCell(cfg, n, grid)
                 } catch (e: OutOfMemoryError) {
                     line("gl ${cfg.name} $n: OUT OF MEMORY")
                     grid.put(JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", n).put("error", "OutOfMemory"))
@@ -759,7 +787,7 @@ class BenchActivity : ComponentActivity() {
         }
         for (cfg in configs().filter { it.name == "baseline" || it.name == "all" }) {
             try {
-                grid.put(glCell(cfg, 100_000, quick = true))
+                glCell(cfg, 100_000, grid, quick = true)
             } catch (e: OutOfMemoryError) {
                 line("gl ${cfg.name} 100000: OUT OF MEMORY")
                 grid.put(JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", 100_000).put("error", "OutOfMemory"))
@@ -775,7 +803,7 @@ class BenchActivity : ComponentActivity() {
         for (n in listOf(1_000, 10_000)) {
             for (cap in listOf(2048.0, 4096.0, 8192.0)) {
                 try {
-                    grid.put(pagedCell(n, cap))
+                    pagedCell(n, cap, grid)
                 } catch (t: Throwable) {
                     line("paged cap ${cap.toInt()} $n failed: ${t.stackTraceToString().take(600)}")
                     grid.put(JSONObject().put("renderer", "paged").put("cap_px", cap).put("strokes", n).put("error", t.toString()))
@@ -786,11 +814,15 @@ class BenchActivity : ComponentActivity() {
     }
 
     /** One GL cell: load, then three gestures, then wet ink, all under [cfg]. */
-    private suspend fun glCell(cfg: Cfg, n: Int, quick: Boolean = false): JSONObject {
+    private suspend fun glCell(cfg: Cfg, n: Int, out: JSONArray, quick: Boolean = false) {
         Tuning.reset()
         cfg.apply()
         val ed = canvas ?: InfiniteEditor(this).also { canvas = it }
         val cell = JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", n)
+        out.put(cell) // filed up front, so a crash mid-cell still leaves what it measured
+        autosave()
+        cell.put("stage", "building document")
+        autosave()
         val doc = withContext(Dispatchers.Default) { BenchData.canvasDocument(n) }
         mount(ed.surfaces)
         val vp = ed.viewport
@@ -826,6 +858,8 @@ class BenchActivity : ComponentActivity() {
             vp.clampToLimits()
             if (mul != 1.0) vp.zoomAround(vp.widthPx / 2.0, vp.heightPx / 2.0, fit * mul)
             ed.view.publish()
+            cell.put("stage", "running $label")
+            autosave()
             var relodMs = 0L
             val t1 = SystemClock.elapsedRealtime()
             if (ed.applyLod()) { awaitFrame(); relodMs = SystemClock.elapsedRealtime() - t1 }
@@ -843,6 +877,7 @@ class BenchActivity : ComponentActivity() {
             }
             r.put("lod_level", Tuning.lodLevel).put("relod_ms", relodMs)
             gestures.put(label, r)
+            autosave()
             line("gl ${cfg.name} $n $label  p95 ${r.optDouble("p95_ms")} >1.5x ${r.optDouble("over_1_5_refresh_pct")}%  " +
                 "work ${r.optDouble("gl_work_ms_mean")} ms  draws ${r.optInt("gl_draw_calls")}  lod ${Tuning.lodLevel}")
             delay(600)
@@ -854,20 +889,24 @@ class BenchActivity : ComponentActivity() {
             ed.view.publish()
             ed.applyLod()
             delay(1200)
+            cell.put("stage", "wet ink")
+            autosave()
             cell.put("wet_ink", wetInk("gl", n, ed.view, { ed.document.items.size }, ed))
         }
+        cell.put("stage", "done")
         glLine("gl ${cfg.name} $n", ed.view.stats)
         ed.replaceDocument(InfiniteDocument())
         Tuning.lodLevel = 0
         System.gc()
         delay(700)
-        return cell
     }
 
     /** One Skia cell at a bitmap cap: fit-width pan, pinch, and the share of frames that were blurry. */
-    private suspend fun pagedCell(n: Int, cap: Double): JSONObject {
+    private suspend fun pagedCell(n: Int, cap: Double, out: JSONArray) {
         val ed = paged ?: Editor(this).also { paged = it }
         val cell = JSONObject().put("renderer", "paged").put("cap_px", cap).put("strokes", n)
+        out.put(cell)
+        autosave()
         val doc = withContext(Dispatchers.Default) { BenchData.pagedDocument(n) }
         mount(ed.surfaces)
         val st = ed.state
@@ -898,6 +937,7 @@ class BenchActivity : ComponentActivity() {
             }
             r.put("blurry_frame_pct", if (frames == 0) 0.0 else round(100.0 * blurry / frames))
             gestures.put(label, r)
+            autosave()
             line("paged cap ${cap.toInt()} $n $label  p95 ${r.optDouble("p95_ms")} >1.5x ${r.optDouble("over_1_5_refresh_pct")}%  blurry ${r.optDouble("blurry_frame_pct")}%")
             delay(600)
         }
@@ -911,7 +951,6 @@ class BenchActivity : ComponentActivity() {
         st.relayout()
         System.gc()
         delay(700)
-        return cell
     }
 
     /** Wet ink on the GL canvas with the front-buffer pad on and off. */
