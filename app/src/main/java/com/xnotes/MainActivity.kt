@@ -750,6 +750,21 @@ private fun EditorScreen(
         }
     }
 
+    fun savePagesAsPdf(from: Editor, pages: List<Int>) {
+        if (pages.isEmpty()) return
+        runPdfExport(from.title, shareDir = false,
+            render = { o, prog, cancel -> from.exportPagesToPdf(pages, o, prog, cancel) },
+            onReady = { temp -> pendingExportTemp = temp; savePdfLauncher.launch("${from.title}.pdf") })
+    }
+
+    // One page -> a single PNG (CreateDocument); several -> a folder the user picks (one PNG per page).
+    fun savePagesAsImages(from: Editor, pages: List<Int>) {
+        if (pages.isEmpty()) return
+        pendingExportPages = PendingPages(from, pages)
+        if (pages.size == 1) savePageImageLauncher.launch("%s-p%02d.png".format(from.title, pages[0] + 1))
+        else savePagesImagesTreeLauncher.launch(null)
+    }
+
     /** The toolbar's Export button: a canvas as a smart-paged PDF, a note as PDF or PNG pages, shared or saved. */
     fun exportFrom(from: Editor, format: com.xnotes.ui.ExportFormat, allPages: Boolean, share: Boolean) {
         if (from.canvasOpen) {
@@ -772,21 +787,6 @@ private fun EditorScreen(
             share -> sharePages(from, pages, false)
             else -> savePagesAsImages(from, pages)
         }
-    }
-
-    fun savePagesAsPdf(from: Editor, pages: List<Int>) {
-        if (pages.isEmpty()) return
-        runPdfExport(from.title, shareDir = false,
-            render = { o, prog, cancel -> from.exportPagesToPdf(pages, o, prog, cancel) },
-            onReady = { temp -> pendingExportTemp = temp; savePdfLauncher.launch("${from.title}.pdf") })
-    }
-
-    // One page -> a single PNG (CreateDocument); several -> a folder the user picks (one PNG per page).
-    fun savePagesAsImages(from: Editor, pages: List<Int>) {
-        if (pages.isEmpty()) return
-        pendingExportPages = PendingPages(from, pages)
-        if (pages.size == 1) savePageImageLauncher.launch("%s-p%02d.png".format(from.title, pages[0] + 1))
-        else savePagesImagesTreeLauncher.launch(null)
     }
 
     // Every shortcut acts on the focused pane, so the same KeyActions serve both of them.
