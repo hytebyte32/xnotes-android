@@ -94,6 +94,7 @@ fun Toolbar(
     onAddStickers: () -> Unit,
     onClosePane: (() -> Unit)? = null,
     onImportTemplate: () -> Unit = {},
+    onExport: (ExportFormat, Boolean, Boolean) -> Unit = { _, _, _ -> },
 ) {
     // The five stroke tools use the designed vector drawables (res/drawable/ic_stroke_*),
     // tinted at the call site like every other icon; the rest use the built-in line set.
@@ -137,6 +138,7 @@ fun Toolbar(
                     onAddStickers = onAddStickers,
                     onToggleFullscreen = onToggleFullscreen,
                     onImportTemplate = onImportTemplate,
+                    onExport = onExport,
                 )
             }
         }
@@ -171,6 +173,7 @@ private fun ToolbarItemView(
     onAddStickers: () -> Unit,
     onToggleFullscreen: () -> Unit,
     onImportTemplate: () -> Unit,
+    onExport: (ExportFormat, Boolean, Boolean) -> Unit,
 ) {
     when (item) {
         // Canvas-only items; a stored paged layout can never hold one, so nothing is drawn.
@@ -208,6 +211,7 @@ private fun ToolbarItemView(
             ) { editor.toggleProtractor() }
 
         ToolbarItem.IMAGE -> ImageMenu(editor, onInsertImage, onAddStickers)
+        ToolbarItem.EXPORT -> ExportButton(isCanvas = false, onExport = onExport)
 
         ToolbarItem.UNDO -> ToolbarIcon(XnotesIcons.undo, stringResource(R.string.undo), enabled = editor.canUndo) { editor.undo() }
         ToolbarItem.REDO -> ToolbarIcon(XnotesIcons.redo, stringResource(R.string.redo), enabled = editor.canRedo) { editor.redo() }

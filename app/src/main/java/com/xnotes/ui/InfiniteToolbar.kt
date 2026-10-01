@@ -50,6 +50,7 @@ fun InfiniteToolbar(
     onOpenBackstage: () -> Unit,
     onInsertImage: () -> Unit = {},
     onClosePane: (() -> Unit)? = null,
+    onExport: (ExportFormat, Boolean, Boolean) -> Unit = { _, _, _ -> },
 ) {
     // The stroke tools use the same designed drawables the paged toolbar does, so a pen looks like
     // a pen on either canvas rather than like a generic glyph.
@@ -131,6 +132,7 @@ fun InfiniteToolbar(
                     ) { editor.measure.toggleProtractor() }
 
                     ToolbarItem.IMAGE -> ToolbarIcon(XnotesIcons.image, stringResource(R.string.insert_image)) { onInsertImage() }
+                    ToolbarItem.EXPORT -> ExportButton(isCanvas = true, onExport = onExport)
 
                     ToolbarItem.COLORS ->
                         editor.toolbarColors.take(editor.toolbarColorCount).forEachIndexed { i, color ->

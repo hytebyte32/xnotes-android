@@ -1694,6 +1694,21 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         )
     }
 
+    /** A main-thread-safe copy of the open canvas for an export that renders off the main thread. */
+    fun snapshotCanvas(): com.xnotes.core.infinite.InfiniteDocument = infinite.document.snapshotForWrite()
+
+    /** Write [doc] (from [snapshotCanvas]) as a smart-paged PDF. Runs off the main thread. */
+    fun exportCanvasSnapshot(
+        doc: com.xnotes.core.infinite.InfiniteDocument,
+        out: OutputStream,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        isCancelled: () -> Boolean = { false },
+    ) {
+        com.xnotes.platform.CanvasPdfExporter.export(
+            appContext, doc, out, doc.background.paperColor ?: state.palette.paper, onProgress, isCancelled,
+        )
+    }
+
     /**
      * Flatten the open note to a PDF written to [out], reporting per-page progress and
      * polling [isCancelled] so a long export can show a dialog and be aborted. The caller

@@ -750,6 +750,30 @@ private fun EditorScreen(
         }
     }
 
+    /** The toolbar's Export button: a canvas as a smart-paged PDF, a note as PDF or PNG pages, shared or saved. */
+    fun exportFrom(from: Editor, format: com.xnotes.ui.ExportFormat, allPages: Boolean, share: Boolean) {
+        if (from.canvasOpen) {
+            val stem = from.infinite.document.displayName ?: from.title
+            val snap = from.snapshotCanvas() // taken here on the main thread; the render runs off it
+            runPdfExport(stem, shareDir = share, counting = "item",
+                render = { o, prog, cancel -> from.exportCanvasSnapshot(snap, o, prog, cancel) },
+                onReady = { temp ->
+                    if (share) runCatching { launchShare(temp, stem, "application/pdf") }.onFailure { editor.message = context.getString(R.string.err_share_pages) }
+                    else { pendingExportTemp = temp; savePdfLauncher.launch("$stem.pdf") }
+                })
+            return
+        }
+        val count = from.pageCount
+        if (count <= 0) return
+        val pages = if (allPages) (0 until count).toList() else listOf(from.state.currentPageIndex().coerceIn(0, count - 1))
+        when {
+            format == com.xnotes.ui.ExportFormat.PDF && share -> sharePages(from, pages, true)
+            format == com.xnotes.ui.ExportFormat.PDF -> savePagesAsPdf(from, pages)
+            share -> sharePages(from, pages, false)
+            else -> savePagesAsImages(from, pages)
+        }
+    }
+
     fun savePagesAsPdf(from: Editor, pages: List<Int>) {
         if (pages.isEmpty()) return
         runPdfExport(from.title, shareDir = false,
@@ -891,6 +915,7 @@ private fun EditorScreen(
                 onSharePages = { pane, pages, asPdf -> sharePages(pane, pages, asPdf) },
                 onSavePagesAsPdf = { pane, pages -> savePagesAsPdf(pane, pages) },
                 onSavePagesAsImages = { pane, pages -> savePagesAsImages(pane, pages) },
+                onExport = { pane, format, all, share -> exportFrom(pane, format, all, share) },
             )
             SplitHost(editor, actions)
         }
@@ -1032,6 +1057,7 @@ private class PaneActions(
     val onSharePages: (Editor, List<Int>, Boolean) -> Unit,
     val onSavePagesAsPdf: (Editor, List<Int>) -> Unit,
     val onSavePagesAsImages: (Editor, List<Int>) -> Unit,
+    val onExport: (Editor, com.xnotes.ui.ExportFormat, Boolean, Boolean) -> Unit,
 )
 
 /** Neither pane of a split may be squeezed below this share of the split axis. */
@@ -1191,6 +1217,7 @@ private fun EditorPane(
                     onOpenBackstage = actions.onOpenBackstage,
                     onInsertImage = { actions.onInsertCanvasImage(editor, null) },
                     onClosePane = onClose,
+                    onExport = { f, a, s -> actions.onExport(editor, f, a, s) },
                 )
             }
             ToolbarAround(bar, onCover = canvas::setToolbarCover) { floatingBar ->
@@ -1219,6 +1246,7 @@ private fun EditorPane(
                     onAddStickers = actions.onAddStickers,
                     onClosePane = onClose,
                     onImportTemplate = actions.onImportTemplate,
+                    onExport = { f, a, s -> actions.onExport(editor, f, a, s) },
                 )
             }
             ToolbarAround(bar, onCover = editor::setToolbarCover) { floatingBar ->

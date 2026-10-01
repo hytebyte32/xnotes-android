@@ -43,6 +43,9 @@ enum class ToolbarItem(val id: String) {
     FULLSCREEN("fullscreen"),
     COLORS("colors"),
 
+    /** One-tap export of the open note or canvas. */
+    EXPORT("export"),
+
     /** Canvas only: saved views, which are what page numbers are on an unbounded surface. */
     WAYPOINTS("waypoints"),
 
@@ -152,6 +155,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.WAND to ToolbarItem.LASSO,
             ToolbarItem.RULER to ToolbarItem.SHAPE,
             ToolbarItem.PROTRACTOR to ToolbarItem.RULER,
+            ToolbarItem.EXPORT to ToolbarItem.REDO,
         )
 
         /**
@@ -168,7 +172,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.PROTRACTOR,
             ToolbarItem.IMAGE, ToolbarItem.COLORS, ToolbarItem.UNDO, ToolbarItem.REDO,
             ToolbarItem.STYLES, ToolbarItem.WAYPOINTS, ToolbarItem.MINIMAP,
-            ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK,
+            ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK, ToolbarItem.EXPORT,
         )
 
         /** Everything the paged bar can hold: the whole enum bar the two canvas-only additions. */
