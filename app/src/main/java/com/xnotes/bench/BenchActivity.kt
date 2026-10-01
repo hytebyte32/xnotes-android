@@ -34,6 +34,7 @@ import com.xnotes.core.model.Document
 import com.xnotes.core.model.ImageData
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.TextItem
 import com.xnotes.core.tools.Tool
 import com.xnotes.format.CanvasCodec
@@ -104,6 +105,7 @@ class BenchActivity : ComponentActivity() {
             row.addView(this)
         }
         button("Run grid") { startGrid() }
+        button("Run heap") { startHeap() }
         button("Run gaps") { start(quick = true) }
         button("Run gaps + 100k") { start(quick = false) }
         button("Copy report") { copyReport() }
@@ -991,5 +993,195 @@ class BenchActivity : ComponentActivity() {
         ed.replaceDocument(InfiniteDocument())
         System.gc()
         delay(500)
+    }
+
+    // --- Java heap ---
+
+    private fun usedMb(): Double {
+        val rt = Runtime.getRuntime()
+        return (rt.totalMemory() - rt.freeMemory()) / 1048576.0
+    }
+
+    /** Heap in use once the collector has had several goes at it, so it counts what is really held. */
+    private suspend fun settledMb(): Double {
+        repeat(3) {
+            System.gc()
+            System.runFinalization()
+            delay(150)
+        }
+        return round(usedMb())
+    }
+
+    /** Runs [block] while a thread samples the heap, and returns the highest reading in [peak]. */
+    private suspend fun <T> withPeak(peak: DoubleArray, block: suspend () -> T): T {
+        val sampler = scope.launch(Dispatchers.Default) {
+            while (true) {
+                peak[0] = maxOf(peak[0], usedMb())
+                delay(15)
+            }
+        }
+        try {
+            return block()
+        } finally {
+            sampler.cancel()
+        }
+    }
+
+    private fun startHeap() {
+        if (job?.isActive == true) return
+        text.setLength(0)
+        reportView.text = ""
+        beginAutosave()
+        job = scope.launch {
+            panel.visibility = View.INVISIBLE
+            try {
+                heapSuite()
+            } catch (t: Throwable) {
+                line("FAILED: ${t.stackTraceToString().take(900)}")
+            }
+            Tuning.reset()
+            panel.visibility = View.VISIBLE
+            line("done")
+        }
+    }
+
+    private suspend fun heapSuite() {
+        results.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+        results.put("heap_limit_mb", Runtime.getRuntime().maxMemory() / 1048576)
+        line("heap: limit ${Runtime.getRuntime().maxMemory() / 1048576} MB")
+        val rows = JSONArray()
+        results.put("heap", rows)
+        // The shipped defaults, so this is the heap the real app would carry.
+        Tuning.apply(sharedRails = true, simplify = true, coarseCaps = true, lod = false, mergeDraws = true, staticBuffers = true)
+        for (n in listOf(1_000, 10_000, 30_000, 60_000, 100_000)) {
+            canvasHeap(n, rows)
+            pagedHeap(n, rows)
+        }
+        saveJson()
+    }
+
+    private suspend fun canvasHeap(n: Int, rows: JSONArray) {
+        val row = JSONObject().put("renderer", "canvas").put("strokes", n)
+        rows.put(row)
+        var step = "start"
+        try {
+            canvas = null
+            stage.let { step = "baseline" }
+            val ed = InfiniteEditor(this).also { canvas = it }
+            mount(ed.surfaces)
+            val h0 = settledMb()
+            step = "building model"
+            var doc: InfiniteDocument? = withContext(Dispatchers.Default) { BenchData.canvasDocument(n) }
+            val h1 = settledMb()
+            row.put("model_kb_per_stroke", round((h1 - h0) * 1024 / n))
+            step = "building geometry caches"
+            withContext(Dispatchers.Default) { for (it in doc!!.items) (it as? Stroke)?.geometry() }
+            val h2 = settledMb()
+            row.put("geometry_cache_kb_per_stroke", round((h2 - h1) * 1024 / n))
+            withContext(Dispatchers.Default) { for (it in doc!!.items) (it as? Stroke)?.releaseGeometry() }
+            val h3 = settledMb()
+            row.put("after_release_vs_model_mb", round(h3 - h1))
+            step = "loading into the scene"
+            val peak = DoubleArray(1)
+            val tLoad = SystemClock.elapsedRealtime()
+            withPeak(peak) {
+                ed.replaceDocument(doc!!)
+                repeat(5) { awaitFrame() }
+                delay(2500)
+            }
+            row.put("load_ms", SystemClock.elapsedRealtime() - tLoad)
+            row.put("load_peak_mb", round(peak[0]))
+            row.put("load_peak_over_model_mb", round(peak[0] - h1))
+            val h4 = settledMb()
+            row.put("loaded_total_kb_per_stroke", round((h4 - h0) * 1024 / n))
+            withContext(Dispatchers.Default) { for (it in doc!!.items) (it as? Stroke)?.releaseGeometry() }
+            val h5 = settledMb()
+            row.put("scene_kb_per_stroke", round((h5 - h1) * 1024 / n))
+            row.put("geometry_still_cached_kb_per_stroke", round((h4 - h5) * 1024 / n))
+            step = "cleanup"
+            ed.replaceDocument(InfiniteDocument())
+            doc = null
+            row.put("stage", "done")
+            line("heap canvas $n  model ${row.optDouble("model_kb_per_stroke")} KB, geometry cache ${row.optDouble("geometry_cache_kb_per_stroke")} KB, " +
+                "scene ${row.optDouble("scene_kb_per_stroke")} KB, load peak ${row.optDouble("load_peak_mb")} MB (+${row.optDouble("load_peak_over_model_mb")} over model)")
+        } catch (e: OutOfMemoryError) {
+            row.put("stage", step).put("error", "OutOfMemory")
+            line("heap canvas $n: OUT OF MEMORY while $step")
+        } catch (t: Throwable) {
+            row.put("stage", step).put("error", t.toString())
+            line("heap canvas $n failed while $step: ${t.stackTraceToString().take(500)}")
+        }
+        canvas?.let { runCatching { it.replaceDocument(InfiniteDocument()) } }
+        stage.removeAllViews()
+        canvas = null
+        settledMb()
+        autosave()
+    }
+
+    private suspend fun pagedHeap(n: Int, rows: JSONArray) {
+        val row = JSONObject().put("renderer", "paged").put("strokes", n)
+        rows.put(row)
+        var step = "start"
+        try {
+            val ed = paged ?: Editor(this).also { paged = it }
+            mount(ed.surfaces)
+            val st = ed.state
+            st.document = Document.blank()
+            st.invalidateAllCaches()
+            st.relayout()
+            val h0 = settledMb()
+            step = "building model"
+            var doc: Document? = withContext(Dispatchers.Default) { BenchData.pagedDocument(n) }
+            val h1 = settledMb()
+            row.put("model_kb_per_stroke", round((h1 - h0) * 1024 / n))
+            step = "building geometry caches"
+            withContext(Dispatchers.Default) {
+                for (p in doc!!.pages) for (it in p.items) (it as? Stroke)?.geometry()
+            }
+            val h2 = settledMb()
+            row.put("geometry_cache_kb_per_stroke", round((h2 - h1) * 1024 / n))
+            withContext(Dispatchers.Default) {
+                for (p in doc!!.pages) for (it in p.items) (it as? Stroke)?.releaseGeometry()
+            }
+            step = "loading into the editor"
+            val peak = DoubleArray(1)
+            val tLoad = SystemClock.elapsedRealtime()
+            withPeak(peak) {
+                st.document = doc!!
+                st.invalidateAllCaches()
+                st.relayout()
+                st.fitWidth()
+                repeat(5) { awaitFrame() }
+                delay(3000)
+            }
+            row.put("load_ms", SystemClock.elapsedRealtime() - tLoad)
+            row.put("load_peak_mb", round(peak[0]))
+            row.put("load_peak_over_model_mb", round(peak[0] - h1))
+            val h4 = settledMb()
+            row.put("loaded_total_kb_per_stroke", round((h4 - h0) * 1024 / n))
+            step = "cleanup"
+            st.document = Document.blank()
+            st.invalidateAllCaches()
+            st.relayout()
+            doc = null
+            row.put("stage", "done")
+            line("heap paged $n  model ${row.optDouble("model_kb_per_stroke")} KB, geometry cache ${row.optDouble("geometry_cache_kb_per_stroke")} KB, " +
+                "loaded total ${row.optDouble("loaded_total_kb_per_stroke")} KB, load peak ${row.optDouble("load_peak_mb")} MB")
+        } catch (e: OutOfMemoryError) {
+            row.put("stage", step).put("error", "OutOfMemory")
+            line("heap paged $n: OUT OF MEMORY while $step")
+        } catch (t: Throwable) {
+            row.put("stage", step).put("error", t.toString())
+            line("heap paged $n failed while $step: ${t.stackTraceToString().take(500)}")
+        }
+        runCatching {
+            paged?.state?.let { s ->
+                s.document = Document.blank()
+                s.invalidateAllCaches()
+                s.relayout()
+            }
+        }
+        settledMb()
+        autosave()
     }
 }
