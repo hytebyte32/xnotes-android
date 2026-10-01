@@ -325,6 +325,11 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         val started = System.nanoTime()
         val meshed = ItemMesher.mesh(item)
         scene.lastTessellateMs = (System.nanoTime() - started) / 1_000_000.0
+        fileMeshed(item, meshed)
+    }
+
+    /** Hand an item's finished triangles to the renderer, or drop it if it draws nothing. Main thread. */
+    private fun fileMeshed(item: CanvasItem, meshed: MeshedItem?) {
         if (meshed == null || meshed.isEmpty) {
             scene.remove(item)
             return
@@ -405,22 +410,93 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         // 100k-stroke canvas out of heap.
         val items = ArrayList(document.items)
         var backPressure = view.isAttachedToWindow && view.width > 0
-        var i = 0
         var meshNs = 0L
         var waitNs = 0L
-        while (i < items.size) {
-            val end = minOf(i + LOAD_CHUNK, items.size)
+        val parallel = meshInParallel && items.size >= PARALLEL_MIN_ITEMS
+        val chunks = ArrayList<IntRange>()
+        var from = 0
+        while (from < items.size) {
+            val end = minOf(from + LOAD_CHUNK, items.size)
+            chunks.add(from until end)
+            from = end
+        }
+        // Meshing is pure, so workers run it a couple of chunks ahead of the filing; the results are
+        // filed here in document order, which keeps the buffer laid out in z order for draw merging.
+        val ahead = java.util.ArrayDeque<List<java.util.concurrent.Future<Array<MeshedItem?>>>>()
+        var submitted = 0
+        for ((n, chunk) in chunks.withIndex()) {
             val t0 = System.nanoTime()
-            scene.batch { for (k in i until end) pushItem(items[k]) }
+            if (parallel) {
+                while (submitted < chunks.size && submitted <= n + LOAD_LOOKAHEAD) {
+                    ahead.addLast(submitMeshing(items, chunks[submitted]))
+                    submitted++
+                }
+                val futures = ahead.removeFirst()
+                scene.batch { fileChunk(items, chunk, futures) }
+            } else {
+                scene.batch { for (k in chunk) pushItem(items[k]) }
+            }
             val t1 = System.nanoTime()
             meshNs += t1 - t0
-            i = end
-            if (backPressure && i < items.size) backPressure = waitForRenderThread()
+            if (backPressure && n < chunks.size - 1) backPressure = waitForRenderThread()
             waitNs += System.nanoTime() - t1
         }
         lastLoadMeshMs = meshNs / 1_000_000
         lastLoadWaitMs = waitNs / 1_000_000
         scene.setOrder(document.items)
+    }
+
+    /** Switch for the bench: false meshes on the main thread, one item at a time, as before. */
+    var meshInParallel = true
+
+    private val meshPool: java.util.concurrent.ThreadPoolExecutor by lazy {
+        val workers = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
+        java.util.concurrent.ThreadPoolExecutor(
+            workers, workers, 10L, java.util.concurrent.TimeUnit.SECONDS,
+            java.util.concurrent.LinkedBlockingQueue(),
+        ) { r -> Thread(r, "mesh-worker").apply { isDaemon = true } }.also { it.allowCoreThreadTimeOut(true) }
+    }
+
+    /**
+     * Start meshing [range] of [items] on the workers, in slices. Images, and anything held back for
+     * the front buffer, are left for the main thread, which is the only one that may touch them.
+     */
+    private fun submitMeshing(items: List<CanvasItem>, range: IntRange): List<java.util.concurrent.Future<Array<MeshedItem?>>> {
+        val tasks = ArrayList<java.util.concurrent.Future<Array<MeshedItem?>>>()
+        var s = range.first
+        while (s <= range.last) {
+            val e = minOf(s + MESH_SLICE - 1, range.last)
+            val slice = ArrayList<CanvasItem?>(e - s + 1)
+            for (k in s..e) {
+                val item = items[k]
+                slice.add(if (item is ImageItem || heldItems.any { it === item }) null else item)
+            }
+            tasks.add(meshPool.submit(java.util.concurrent.Callable { Array(slice.size) { i -> slice[i]?.let { ItemMesher.mesh(it) } } }))
+            s = e + 1
+        }
+        return tasks
+    }
+
+    /** File one chunk's worker results in document order; anything a worker could not do is done here. */
+    private fun fileChunk(items: List<CanvasItem>, range: IntRange, futures: List<java.util.concurrent.Future<Array<MeshedItem?>>>) {
+        var k = range.first
+        for (future in futures) {
+            val meshed = try {
+                future.get()
+            } catch (e: Exception) {
+                null // a worker failed: this slice is meshed here instead
+            }
+            val count = minOf(MESH_SLICE, range.last - k + 1)
+            for (i in 0 until count) {
+                val item = items[k + i]
+                if (meshed == null || item is ImageItem || heldItems.any { it === item }) {
+                    pushItem(item)
+                } else {
+                    fileMeshed(item, meshed[i])
+                }
+            }
+            k += count
+        }
     }
 
     /** How the last scene rebuild split its time: queuing meshed chunks vs waiting for the render thread. */
@@ -1751,6 +1827,9 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     companion object {
         private const val LOD_SETTLE_MS = 300L
         private const val LOAD_CHUNK = 2000
+        private const val LOAD_LOOKAHEAD = 2
+        private const val MESH_SLICE = 250
+        private const val PARALLEL_MIN_ITEMS = 1000
         private const val RENDER_WAIT_NS = 400_000_000L
         /** Zoom step for the keyboard, matching a comfortable notch of a pinch. */
         const val ZOOM_STEP = 1.25

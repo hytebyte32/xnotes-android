@@ -1057,17 +1057,20 @@ class BenchActivity : ComponentActivity() {
             canvasHeap(n, rows)
             pagedHeap(n, rows)
         }
+        // The same loads on the main thread alone, for comparison.
+        for (n in listOf(10_000, 100_000)) canvasHeap(n, rows, parallel = false)
         saveJson()
     }
 
-    private suspend fun canvasHeap(n: Int, rows: JSONArray) {
-        val row = JSONObject().put("renderer", "canvas").put("strokes", n)
+    private suspend fun canvasHeap(n: Int, rows: JSONArray, parallel: Boolean = true) {
+        val row = JSONObject().put("renderer", "canvas").put("strokes", n).put("parallel_meshing", parallel)
         rows.put(row)
         var step = "start"
         try {
             canvas = null
             step = "baseline"
             val ed = InfiniteEditor(this).also { canvas = it }
+            ed.meshInParallel = parallel
             mount(ed.surfaces)
             val h0 = settledMb()
             step = "building model"
@@ -1103,7 +1106,7 @@ class BenchActivity : ComponentActivity() {
             ed.replaceDocument(InfiniteDocument())
             doc = null
             row.put("stage", "done")
-            line("heap canvas $n  model ${row.optDouble("model_kb_per_stroke")} KB, geometry cache ${row.optDouble("geometry_cache_kb_per_stroke")} KB, " +
+            line("heap canvas $n ${if (parallel) "parallel" else "serial"}  load ${row.optLong("load_ms")} ms (mesh ${row.optLong("load_mesh_ms")}, wait ${row.optLong("load_wait_ms")})  model ${row.optDouble("model_kb_per_stroke")} KB, geometry cache ${row.optDouble("geometry_cache_kb_per_stroke")} KB, " +
                 "scene ${row.optDouble("scene_kb_per_stroke")} KB, load peak ${row.optDouble("load_peak_mb")} MB (+${row.optDouble("load_peak_over_model_mb")} over model)")
         } catch (e: OutOfMemoryError) {
             row.put("stage", step).put("error", "OutOfMemory")
