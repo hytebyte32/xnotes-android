@@ -1836,6 +1836,10 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         // Both surfaces' pads: the switch is about the device, not about one of them.
         pad.frontBuffering = !p.disableFrontBuffering
         infiniteOrNull?.pad?.frontBuffering = !p.disableFrontBuffering
+        com.xnotes.core.infinite.Tuning.apply(
+            sharedRails = p.optSharedRails, simplify = p.optSimplify, coarseCaps = p.optCoarseCaps,
+            lod = p.optLod, mergeDraws = p.optMergeDraws, staticBuffers = p.optStaticBuffers,
+        )
         state.pageColorOverride = if (p.defaultTemplate == "color") p.pageColor else null
         val theme = "$palette|${state.pageColorOverride}"
         if (thumbnailTheme != theme) {

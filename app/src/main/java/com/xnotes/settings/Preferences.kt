@@ -82,6 +82,13 @@ data class Preferences(
     val maxCacheResolution: Int = 2048,
     /** Whether wet ink keeps off the front buffer, so every stroke takes the ordinary canvas path. */
     val disableFrontBuffering: Boolean = false,
+    /** GPU ink optimizations for the infinite canvas; each can be switched off if it ever looks wrong. */
+    val optSharedRails: Boolean = true,
+    val optSimplify: Boolean = true,
+    val optCoarseCaps: Boolean = true,
+    val optLod: Boolean = true,
+    val optMergeDraws: Boolean = true,
+    val optStaticBuffers: Boolean = true,
     /** Open in fullscreen; null ⇒ auto (on unless the display has a camera cutout). */
     val startFullscreen: Boolean? = null,
     /** An imported Helix code theme's file path, or null for the built-in colours. */
@@ -172,6 +179,12 @@ data class Preferences(
         .put("canvas_max_zoom_percent", canvasMaxZoomPercent)
         .put("max_cache_resolution", maxCacheResolution)
         .put("disable_front_buffering", disableFrontBuffering)
+        .put("opt_shared_rails", optSharedRails)
+        .put("opt_simplify", optSimplify)
+        .put("opt_coarse_caps", optCoarseCaps)
+        .put("opt_lod", optLod)
+        .put("opt_merge_draws", optMergeDraws)
+        .put("opt_static_buffers", optStaticBuffers)
         .apply {
             if (materialMode != MaterialColourMode.SYSTEM) put("material_mode", materialMode.id)
             if (materialSingleSeed != DEFAULT_MATERIAL_SINGLE) put("material_single_seed", Rgba.toHex(materialSingleSeed))
@@ -310,6 +323,12 @@ data class Preferences(
                 canvasMaxZoomPercent = o.optInt("canvas_max_zoom_percent", 6400).coerceIn(200, 100000),
                 maxCacheResolution = o.optInt("max_cache_resolution", 2048).coerceIn(1024, 4096),
                 disableFrontBuffering = o.optBoolean("disable_front_buffering", false),
+                optSharedRails = o.optBoolean("opt_shared_rails", true),
+                optSimplify = o.optBoolean("opt_simplify", true),
+                optCoarseCaps = o.optBoolean("opt_coarse_caps", true),
+                optLod = o.optBoolean("opt_lod", true),
+                optMergeDraws = o.optBoolean("opt_merge_draws", true),
+                optStaticBuffers = o.optBoolean("opt_static_buffers", true),
                 startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
                 codeThemePath = o.optString("code_theme_path").ifEmpty { null },
                 codeThemeName = o.optString("code_theme_name").ifEmpty { null },

@@ -549,6 +549,18 @@ fun PreferencesPane(
                 color = palette.textDim.toComposeColor(),
                 fontSize = 12.sp,
             )
+            FieldLabel(stringResource(R.string.pref_canvas_optimizations))
+            CheckRow(stringResource(R.string.pref_opt_shared_rails), prefs.optSharedRails) { update(prefs.copy(optSharedRails = it)) }
+            CheckRow(stringResource(R.string.pref_opt_simplify), prefs.optSimplify) { update(prefs.copy(optSimplify = it)) }
+            CheckRow(stringResource(R.string.pref_opt_coarse_caps), prefs.optCoarseCaps) { update(prefs.copy(optCoarseCaps = it)) }
+            CheckRow(stringResource(R.string.pref_opt_lod), prefs.optLod) { update(prefs.copy(optLod = it)) }
+            CheckRow(stringResource(R.string.pref_opt_merge_draws), prefs.optMergeDraws) { update(prefs.copy(optMergeDraws = it)) }
+            CheckRow(stringResource(R.string.pref_opt_static_buffers), prefs.optStaticBuffers) { update(prefs.copy(optStaticBuffers = it)) }
+            Text(
+                stringResource(R.string.pref_canvas_optimizations_help),
+                color = palette.textDim.toComposeColor(),
+                fontSize = 12.sp,
+            )
 
             if (editor.treeSitterAvailable) {
                 HorizontalDivider(color = palette.border.toComposeColor())

@@ -220,6 +220,14 @@
     <string name="pref_performance">Performance</string>
     <string name="pref_cache_help">Higher feels smoother when you pan and zoom but uses more memory. Your ink and PDFs look just as crisp either way.</string>
     <string name="pref_disable_front_buffering">Disable front buffering</string>
+    <string name="pref_canvas_optimizations">Infinite canvas ink optimizations</string>
+    <string name="pref_opt_shared_rails">Share stroke edge vertices</string>
+    <string name="pref_opt_simplify">Simplify stroke samples</string>
+    <string name="pref_opt_coarse_caps">Coarser round caps and joins</string>
+    <string name="pref_opt_lod">Lower detail when zoomed out</string>
+    <string name="pref_opt_merge_draws">Merge draw calls</string>
+    <string name="pref_opt_static_buffers">Static ink buffers</string>
+    <string name="pref_canvas_optimizations_help">These cut the memory and work the infinite canvas spends on ink. They are on by default. If a stroke ever looks angular or its ends look polygonal when zoomed in, turn off simplify and coarser caps first. Changes apply to canvases opened afterwards.</string>
     <string name="pref_front_buffering_help">Front buffering paints the pen\'s ink straight into the frame the screen is showing, which is what makes it feel instant. A few panels do not hand that over cleanly, and there the ink can flicker or fall behind the nib. Turn it off on those and every stroke goes through the ordinary canvas.</string>
     <string name="pref_code_highlighting">Code highlighting</string>
     <string name="pref_default_code_language">Default code language</string>

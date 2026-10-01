@@ -33,6 +33,24 @@ object Tuning {
         return maxOf(simplifyTolerance, lod)
     }
 
+    /** Switch the optimizations on or off from preferences, with the tuned constants behind each. */
+    fun apply(
+        sharedRails: Boolean, simplify: Boolean, coarseCaps: Boolean,
+        lod: Boolean, mergeDraws: Boolean, staticBuffers: Boolean,
+    ) {
+        this.sharedRails = sharedRails
+        simplifyTolerance = if (simplify) SIMPLIFY_PX else 0.0
+        capTolerance = if (coarseCaps) COARSE_CAP_TOLERANCE else 0.0
+        lodEnabled = lod
+        if (!lod) lodLevel = 0
+        mergeGap = if (mergeDraws) MERGE_GAP_INDICES else 0
+        this.staticBuffers = staticBuffers
+    }
+
+    const val SIMPLIFY_PX = 0.25
+    const val COARSE_CAP_TOLERANCE = 0.5 / 8.0
+    const val MERGE_GAP_INDICES = 30_000
+
     fun reset() {
         sharedRails = false
         capTolerance = 0.0
