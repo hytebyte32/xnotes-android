@@ -1259,7 +1259,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     private fun clipboardImageUri(): android.net.Uri? =
         com.xnotes.platform.SystemClipboard.imageUri(appContext)
 
-    private fun rebuildPdfSource() {
+    /** Internal so the bench can swap in a PDF-backed document. */
+    internal fun rebuildPdfSource() {
         pdfSource?.close()
         pdfSource = state.document.pdfFile?.let { com.xnotes.platform.PdfSource.create(appContext, it) }
         pdfSource?.onImagesReady = { index ->

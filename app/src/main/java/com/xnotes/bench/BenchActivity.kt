@@ -106,6 +106,7 @@ class BenchActivity : ComponentActivity() {
         }
         button("Run grid") { startGrid() }
         button("Run heap") { startHeap() }
+        button("Run decision") { startDecision() }
         button("Run gaps") { start(quick = true) }
         button("Run gaps + 100k") { start(quick = false) }
         button("Copy report") { copyReport() }
@@ -284,7 +285,8 @@ class BenchActivity : ComponentActivity() {
         st.relayout()
         st.fitWidth()
         awaitFrame()
-        line("paged: loaded in ${SystemClock.elapsedRealtime() - tLoad} ms")
+        val loadMs = SystemClock.elapsedRealtime() - tLoad
+        line("paged: loaded in $loadMs ms")
         delay(2500)
         ed.selectTool(Tool.PEN)
         for ((label, zoomMul, kind) in gestureMatrix()) {
@@ -302,7 +304,7 @@ class BenchActivity : ComponentActivity() {
                 frames++
                 if (st.isPastResolutionCap() && st.sharpViewportBlit() == null) blurry++
             }
-            r.put("renderer", "paged").put("strokes", n).put("gesture", label)
+            r.put("renderer", "paged").put("strokes", n).put("gesture", label).put("load_ms", loadMs)
             r.put("blurry_frame_pct", if (frames == 0) 0.0 else round(100.0 * blurry / frames))
             out.put(r)
             line("paged  $label  p50 ${r.optDouble("p50_ms")} p95 ${r.optDouble("p95_ms")} max ${r.optDouble("max_ms")} ms, " +
@@ -333,7 +335,8 @@ class BenchActivity : ComponentActivity() {
         val tLoad = SystemClock.elapsedRealtime()
         ed.replaceDocument(doc)
         awaitFrame()
-        line("canvas: loaded + meshed in ${SystemClock.elapsedRealtime() - tLoad} ms")
+        val loadMs = SystemClock.elapsedRealtime() - tLoad
+        line("canvas: loaded + meshed in $loadMs ms")
         delay(1500)
         ed.armTool(Tool.PEN)
         for ((label, zoomMul, kind) in gestureMatrix()) {
@@ -349,7 +352,7 @@ class BenchActivity : ComponentActivity() {
             val r = gesture(kind, ed.view.let { it }, 4.0, { Triple(vp.zoom, vp.scrollX, vp.scrollY) }) {
                 if (++tick % 20 == 0) samples.add(ed.view.stats)
             }
-            r.put("renderer", "gl").put("strokes", n).put("gesture", label)
+            r.put("renderer", "gl").put("strokes", n).put("gesture", label).put("load_ms", loadMs)
             if (samples.isNotEmpty()) {
                 r.put("gl_fps_mean", round(samples.map { it.fps }.average()))
                 r.put("gl_work_ms_mean", round(samples.map { it.frameMs }.average()))
@@ -529,11 +532,12 @@ class BenchActivity : ComponentActivity() {
         file.delete()
     }
 
-    private fun makePdf(): File {
+    private fun makePdf(pages: Int = 1): File {
         val doc = PdfDocument()
-        val page = doc.startPage(PdfDocument.PageInfo.Builder(595, 842, 1).create())
+        for (pageNo in 0 until pages) {
+        val page = doc.startPage(PdfDocument.PageInfo.Builder(595, 842, pageNo + 1).create())
         val c = page.canvas
-        val rnd = Random(7)
+        val rnd = Random(7 + pageNo)
         val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 11f }
         for (i in 0 until 55) c.drawText("Line $i  The quick brown fox jumps over the lazy dog; 0123456789 ({[]}) ~!@#", 40f, 40f + i * 14f, ink)
         val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 0.6f; color = Color.DKGRAY }
@@ -544,6 +548,7 @@ class BenchActivity : ComponentActivity() {
             c.drawPath(p, line)
         }
         doc.finishPage(page)
+        }
         val f = File(cacheDir, "bench.pdf")
         FileOutputStream(f).use { doc.writeTo(it) }
         doc.close()
@@ -993,6 +998,217 @@ class BenchActivity : ComponentActivity() {
         ed.replaceDocument(InfiniteDocument())
         System.gc()
         delay(500)
+    }
+
+    // --- Decision suite: Skia vs GL pan/zoom, PDF pan, hybrid tiles ---
+
+    private fun startDecision() {
+        if (job?.isActive == true) return
+        text.setLength(0)
+        reportView.text = ""
+        beginAutosave()
+        job = scope.launch {
+            panel.visibility = View.INVISIBLE
+            try {
+                decisionSuite()
+            } catch (t: Throwable) {
+                line("FAILED: ${t.stackTraceToString().take(900)}")
+            }
+            Tuning.reset()
+            panel.visibility = View.VISIBLE
+            line("done")
+        }
+    }
+
+    private suspend fun decisionSuite() {
+        results.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+        results.put("sdk", Build.VERSION.SDK_INT)
+        results.put("refresh_ms", round(refreshMs))
+        line("${Build.MODEL}  refresh ${round(1000.0 / refreshMs)} Hz  (decision suite: shipped optimizations, minimap off)")
+        // The shipped defaults, so GL is measured as the app would run it.
+        Tuning.apply(sharedRails = true, simplify = true, coarseCaps = true, lod = false, mergeDraws = true, staticBuffers = true)
+        try { compareSuite() } catch (t: Throwable) { line("compare failed: ${t.stackTraceToString().take(600)}") }
+        autosave()
+        try { pdfPan() } catch (t: Throwable) { line("pdf pan failed: ${t.stackTraceToString().take(600)}") }
+        autosave()
+        try { hybridTiles() } catch (t: Throwable) { line("hybrid failed: ${t.stackTraceToString().take(900)}") }
+        saveJson()
+    }
+
+    /** Paged (Skia) against canvas (GL) on the same strokes, the same two-finger pan and pinch. */
+    private suspend fun compareSuite() {
+        line("=== Skia (paged) vs GL (canvas): pan / pinch / wet ink ===")
+        val rows = JSONArray()
+        results.put("compare", rows)
+        for (n in listOf(1_000, 10_000, 30_000, 60_000)) {
+            line("--- $n strokes ---")
+            try { pagedScenario(n, rows) } catch (e: OutOfMemoryError) { line("paged $n: OUT OF MEMORY") }
+            autosave()
+            try { canvasScenario(n, rows) } catch (e: OutOfMemoryError) { line("canvas $n: OUT OF MEMORY") }
+            autosave()
+        }
+    }
+
+    /** The paged editor panning a PDF-backed note, with and without ink on top. */
+    private suspend fun pdfPan() {
+        line("=== paged PDF pan (generated 20-page PDF: text + 900 vector paths per page) ===")
+        val rows = JSONArray()
+        results.put("pdf_pan", rows)
+        val pages = 20
+        val file = withContext(Dispatchers.Default) { makePdf(pages) }
+        for ((label, ink) in listOf("pdf only" to 0, "pdf + 10k ink" to 10_000)) {
+            val ed = paged ?: Editor(this).also { paged = it }
+            val doc = withContext(Dispatchers.Default) {
+                val d = if (ink == 0) Document.blank(count = pages) else BenchData.pagedDocument(ink, perPage = ink / pages)
+                d.pdfFile = file
+                d.pages.forEachIndexed { i, p -> p.pdfPage = i }
+                d
+            }
+            mount(ed.surfaces)
+            val st = ed.state
+            val tLoad = SystemClock.elapsedRealtime()
+            st.document = doc
+            ed.rebuildPdfSource()
+            st.invalidateAllCaches()
+            st.relayout()
+            st.fitWidth()
+            awaitFrame()
+            val loadMs = SystemClock.elapsedRealtime() - tLoad
+            line("pdf pan [$label]: loaded in $loadMs ms")
+            delay(3000)
+            for ((gestureLabel, mul, kind) in gestureMatrix()) {
+                st.scrollY = 0.0
+                st.clampScroll()
+                st.fitWidth()
+                if (mul != 1.0) st.setZoomAnchored(st.clearCenter(), st.zoom * mul)
+                delay(1500)
+                var blurry = 0
+                var frames = 0
+                val r = gesture(kind, ed.view, 4.0, { Triple(st.zoom, st.scrollX, st.scrollY) }) {
+                    frames++
+                    if (st.isPastResolutionCap() && st.sharpViewportBlit() == null) blurry++
+                }
+                r.put("scenario", label).put("gesture", gestureLabel).put("load_ms", loadMs)
+                r.put("blurry_frame_pct", if (frames == 0) 0.0 else round(100.0 * blurry / frames))
+                rows.put(r)
+                autosave()
+                line("pdf pan [$label] $gestureLabel  p50 ${r.optDouble("p50_ms")} p95 ${r.optDouble("p95_ms")} max ${r.optDouble("max_ms")} ms, " +
+                    ">1.5x ${r.optDouble("over_1_5_refresh_pct")}%, blurry ${r.optDouble("blurry_frame_pct")}%")
+                delay(600)
+            }
+            results.put("mem_pdf_pan_${ink}", memorySnapshot())
+            st.document = Document.blank()
+            ed.rebuildPdfSource()
+            st.invalidateAllCaches()
+            st.relayout()
+            System.gc()
+            delay(700)
+        }
+        file.delete()
+    }
+
+    /**
+     * What the hybrid would cost, measured in pieces and not wired into either editor: Skia drawing
+     * screen-resolution tiles of dense ink, then a GL view compositing a grid of such tiles under a
+     * pan, then streaming new tiles in while it pans.
+     */
+    private suspend fun hybridTiles() {
+        line("=== hybrid: Skia tile render, GL composite, tile memory ===")
+        val rows = JSONArray()
+        results.put("hybrid", rows)
+        val doc = withContext(Dispatchers.Default) { BenchData.canvasDocument(30_000) }
+        val items = ArrayList(doc.items)
+        val sources = HashMap<Int, Bitmap>()
+        for (tile in listOf(512, 1024)) {
+            for (z in listOf(0.5, 1.0, 2.0, 4.0)) {
+                val renderMs = ArrayList<Double>()
+                val counts = ArrayList<Double>()
+                withContext(Dispatchers.Default) {
+                    val bmp = Bitmap.createBitmap(tile, tile, Bitmap.Config.ARGB_8888)
+                    val span = tile / z
+                    for (k in 0 until 8) {
+                        val x0 = 100.0
+                        val y0 = 3000.0 + k * 2500.0
+                        val area = Rect(x0, y0, span, span)
+                        // The visible set is picked outside the timing: a real tiler would use an index.
+                        val hit = items.filter { it.bounds().intersects(area) }
+                        fun renderOnce(): Double {
+                            val t0 = System.nanoTime()
+                            bmp.eraseColor(Color.WHITE)
+                            val cv = Canvas(bmp)
+                            cv.scale(z.toFloat(), z.toFloat())
+                            cv.translate(-x0.toFloat(), -y0.toFloat())
+                            val r = AndroidRenderer(cv)
+                            for (item in hit) item.paint(r)
+                            return (System.nanoTime() - t0) / 1e6
+                        }
+                        renderOnce() // warm: geometry built, paints primed
+                        renderMs.add((0 until 3).map { renderOnce() }.average())
+                        counts.add(hit.size.toDouble())
+                    }
+                    if (z == 1.0) sources[tile] = bmp else bmp.recycle()
+                }
+                val row = JSONObject().put("kind", "tile_render").put("tile_px", tile).put("zoom", z)
+                row.put("strokes_in_tile_mean", round(counts.average())).put("strokes_in_tile_max", (counts.maxOrNull() ?: 0.0))
+                row.put("render", summarize(renderMs, refreshMs))
+                row.put("tile_mb", round(tile.toDouble() * tile * 4 / (1024 * 1024)))
+                rows.put(row)
+                autosave()
+                line("tile ${tile}px @${z}x  ~${round(counts.average())} strokes  render p50 ${row.getJSONObject("render").optDouble("p50_ms")} " +
+                    "p95 ${row.getJSONObject("render").optDouble("p95_ms")} ms, ${row.optDouble("tile_mb")} MB")
+            }
+        }
+        items.forEach { (it as? Stroke)?.releaseGeometry() }
+        val vw = stage.width.coerceAtLeast(1000)
+        val vh = stage.height.coerceAtLeast(700)
+        for (tile in listOf(512, 1024)) {
+            val src = sources[tile] ?: continue
+            val cols = (vw + tile - 1) / tile + 1
+            val rowsN = (vh + tile - 1) / tile + 1
+            val v = TileCompositeView(this)
+            mount(v)
+            v.tilePx = tile
+            v.cols = cols
+            v.rows = rowsN
+            v.textureCount = cols * rowsN
+            v.source = src
+            v.rebuild = true
+            delay(2500)
+            val first = synchronized(v.uploadMs) { ArrayList(v.uploadMs) }
+            for ((phase, uploads) in listOf("pan only" to 0, "pan + 2 tile uploads per frame" to 2)) {
+                v.uploadsPerFrame = uploads
+                v.frameMs.clear()
+                v.uploadMs.clear()
+                val intervals = ArrayList<Double>()
+                val warm = 500_000_000L
+                val start = awaitFrame()
+                var prev = start
+                var t = start
+                while (t < start + warm + 4_000_000_000L) {
+                    t = awaitFrame()
+                    val el = (t - start) / 1e9
+                    v.panX = (900.0 * sin(2.0 * PI * el / 3.0)).toFloat()
+                    v.panY = (500.0 * sin(2.0 * PI * el / 2.0)).toFloat()
+                    if (t > start + warm) intervals.add((t - prev) / 1e6)
+                    prev = t
+                }
+                val row = JSONObject().put("kind", "composite").put("tile_px", tile).put("phase", phase)
+                row.put("tiles_resident", v.textureCount).put("texture_mb", round(v.textureCount.toDouble() * tile * tile * 4 / (1024 * 1024)))
+                row.put("tiles_drawn", v.drawnTiles).put("gl_renderer", v.rendererName)
+                row.put("first_upload_ms", summarize(first, refreshMs))
+                row.put("frame_intervals", summarize(intervals, refreshMs))
+                row.put("gl_frame_ms", summarize(synchronized(v.frameMs) { ArrayList(v.frameMs) }, refreshMs))
+                if (uploads > 0) row.put("streamed_upload_ms", summarize(synchronized(v.uploadMs) { ArrayList(v.uploadMs) }, refreshMs))
+                rows.put(row)
+                autosave()
+                line("composite ${tile}px [$phase]  ${v.textureCount} tiles ${row.optDouble("texture_mb")} MB  " +
+                    "frame p50 ${row.getJSONObject("frame_intervals").optDouble("p50_ms")} p95 ${row.getJSONObject("frame_intervals").optDouble("p95_ms")} ms, " +
+                    ">1.5x ${row.getJSONObject("frame_intervals").optDouble("over_1_5_refresh_pct")}%, gl work p50 ${row.getJSONObject("gl_frame_ms").optDouble("p50_ms")} ms")
+            }
+            v.onPause()
+            stage.removeAllViews()
+        }
+        sources.values.forEach { it.recycle() }
     }
 
     // --- Java heap ---
