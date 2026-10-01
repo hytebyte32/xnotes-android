@@ -86,7 +86,7 @@ data class Preferences(
     val optSharedRails: Boolean = true,
     val optSimplify: Boolean = true,
     val optCoarseCaps: Boolean = true,
-    val optLod: Boolean = true,
+    val optLod: Boolean = false,
     val optMergeDraws: Boolean = true,
     val optStaticBuffers: Boolean = true,
     /** Open in fullscreen; null ⇒ auto (on unless the display has a camera cutout). */
@@ -326,7 +326,7 @@ data class Preferences(
                 optSharedRails = o.optBoolean("opt_shared_rails", true),
                 optSimplify = o.optBoolean("opt_simplify", true),
                 optCoarseCaps = o.optBoolean("opt_coarse_caps", true),
-                optLod = o.optBoolean("opt_lod", true),
+                optLod = o.optBoolean("opt_lod", false),
                 optMergeDraws = o.optBoolean("opt_merge_draws", true),
                 optStaticBuffers = o.optBoolean("opt_static_buffers", true),
                 startFullscreen = if (o.has("start_fullscreen")) o.getBoolean("start_fullscreen") else null,
