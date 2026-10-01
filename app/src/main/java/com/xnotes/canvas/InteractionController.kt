@@ -67,7 +67,7 @@ import kotlin.math.min
 /** The pointer state machine modes (spec 06 §1). */
 enum class PointerMode {
     IDLE, DRAW, ERASE, BAND, LASSO_DRAW, SHOT, SHAPE, MOVE, RESIZE, TRANSFORM, PAN, PINCH, FLOW_TEXT,
-    TEXT_DRAG, RULER_TWO,
+    TEXT_DRAG, RULER_TWO, CROP,
 }
 
 /**
@@ -121,6 +121,8 @@ class InteractionController(
     private val onTextEditEnd: () -> Unit = {},
     /** Selection menu: a viewport rect to show it anchored to, or null to hide. */
     private val onSelectionMenu: (Rect?) -> Unit = {},
+    /** Crop mode started or ended, so the selection bar can swap its Crop button for Done. */
+    private val onCropChanged: (Boolean) -> Unit = {},
     /** Screenshot menu: a viewport rect to anchor the "copy as image" bar to, or null to hide. */
     private val onScreenshotMenu: (Rect?) -> Unit = {},
     /** Long-press on empty space: open a context menu at (viewport, content). */
@@ -637,6 +639,7 @@ class InteractionController(
             PointerMode.MOVE -> extendMove(content)
             PointerMode.RESIZE -> extendResize(content)
             PointerMode.TRANSFORM -> extendTransform(content)
+            PointerMode.CROP -> extendCrop(content)
             PointerMode.SHAPE -> extendShape(content)
             PointerMode.FLOW_TEXT ->
                 // A plain drag with the text tool scrolls the document; only a long-pressed
@@ -692,6 +695,7 @@ class InteractionController(
             PointerMode.MOVE -> endMove(content)
             PointerMode.RESIZE -> endResize()
             PointerMode.TRANSFORM -> endTransform()
+            PointerMode.CROP -> endCropDrag()
             PointerMode.SHAPE -> endShape()
             PointerMode.FLOW_TEXT -> {
                 mode = PointerMode.IDLE
@@ -1242,6 +1246,7 @@ class InteractionController(
     /** Rotate-grip centre (content space, no move offset), out past the oriented box's top edge, or
      *  null when the selection can't rotate or is a single line/arrow (reoriented by an endpoint). */
     private fun selectionRotatePoint(): Pt? {
+        if (cropItem != null) return null
         if (!selectionIsRotatable()) return null
         val obb = selObb ?: return null
         return ResizeMath.obbRotateGrip(obb, ROTATE_ARM / state.zoom)
@@ -1263,6 +1268,7 @@ class InteractionController(
      *  select and lasso tools so both grab handles the same way. */
     private fun tryGrabSelectionHandle(content: Pt): Boolean {
         if (selection.isEmpty()) return false
+        if (cropItem != null) return tryGrabCropHandle(content)
         val tol = HANDLE_HIT / state.zoom
         selectionRotatePoint()?.let {
             if (it.distanceTo(content) <= tol) {
@@ -1551,6 +1557,100 @@ class InteractionController(
         refreshSelectionMenu()
         requestRender()
         if (changed) maybeSwitchBackAfterSelect()
+    }
+
+    // --- CROP (an image's visible part; the rest stays, hidden) ---
+
+    private var cropItem: ImageItem? = null
+    private var cropPage = -1
+    private var cropBefore: GeometrySnapshot? = null
+    private var cropHandle: HandleId? = null
+
+    /** True while the selected image is being cropped (its crop frame shows instead of the turn grip). */
+    val cropping: Boolean get() = cropItem != null
+
+    /** A single unlocked image in an unrotated view can be cropped. */
+    fun canCropSelection(): Boolean =
+        cropItem == null && state.rotationDeg == 0 &&
+            (selection.singleOrNull()?.item as? ImageItem)?.locked == false
+
+    fun beginCrop() {
+        if (!canCropSelection()) return
+        val sel = selection[0]
+        val img = sel.item as ImageItem
+        cropItem = img
+        cropPage = sel.pageIndex
+        onCropChanged(true)
+        cropBefore = img.snapshotGeometry()
+        refreshCropObb()
+        refreshSelectionMenu()
+        requestRender()
+    }
+
+    /** Leave crop mode, keeping the crop as one undoable step. */
+    fun endCrop() {
+        if (cropItem == null) return
+        finishCrop()
+        selObb = selectionBoundsContent()?.let { Obb.fromAabb(it) }
+        refreshSelectionMenu()
+        requestRender()
+    }
+
+    private fun finishCrop() {
+        val img = cropItem ?: return
+        val before = cropBefore
+        cropItem = null
+        cropBefore = null
+        cropHandle = null
+        onCropChanged(false)
+        if (before != null) {
+            val after = img.snapshotGeometry()
+            if (after != before) {
+                history.push(TransformItems(listOf(img), listOf(before), listOf(after)))
+                state.document.dirty = true
+                onContentChanged()
+            }
+        }
+    }
+
+    /** The crop frame is the image's own box, tilted with it. */
+    private fun refreshCropObb() {
+        val img = cropItem ?: return
+        val c = state.fromPageSpace(cropPage, img.rect.center)
+        selObb = Obb(c, img.rect.w / 2.0, img.rect.h / 2.0, img.angle)
+    }
+
+    private fun tryGrabCropHandle(content: Pt): Boolean {
+        val obb = selObb ?: return false
+        val id = ResizeMath.hitHandle(ResizeMath.obbHandles(obb), content, HANDLE_HIT / state.zoom) ?: return false
+        cropHandle = id
+        mode = PointerMode.CROP
+        onSelectionMenu(null)
+        return true
+    }
+
+    private fun extendCrop(content: Pt) {
+        val img = cropItem ?: return
+        val h = cropHandle ?: return
+        if (state.pageRects.getOrNull(cropPage) == null) return
+        val local = state.toPageSpace(cropPage, content)
+        img.cropEdge(
+            left = h == HandleId.L || h == HandleId.TL || h == HandleId.BL,
+            right = h == HandleId.R || h == HandleId.TR || h == HandleId.BR,
+            top = h == HandleId.T || h == HandleId.TL || h == HandleId.TR,
+            bottom = h == HandleId.B || h == HandleId.BL || h == HandleId.BR,
+            p = local,
+            minSize = ResizeMath.MIN_SIZE,
+        )
+        refreshCropObb()
+        requestRender()
+    }
+
+    private fun endCropDrag() {
+        cropHandle = null
+        mode = PointerMode.IDLE
+        refreshSelectionMenu()
+        requestRender()
     }
 
     // --- TRANSFORM (generic resize + rotate) ---
@@ -2057,6 +2157,7 @@ class InteractionController(
     // --- selection management ---
 
     private fun setSelection(items: List<Selected>) {
+        if (cropItem != null && items.singleOrNull()?.item !== cropItem) finishCrop()
         // Items whose lifted state flips: those leaving the old selection (repainted back
         // into the cache) and those entering it (lifted out of it). Update the selection
         // first so the in-place repair below sees the new lifted set.
@@ -2071,6 +2172,7 @@ class InteractionController(
     }
 
     fun clearSelection() {
+        if (cropItem != null) finishCrop()
         // Restore the tool a long-press grab temporarily switched away from.
         longPressPrevTool?.let {
             tool = it
@@ -2882,6 +2984,15 @@ class InteractionController(
 
             // Screenshot capture region: the live drag rect, kept frozen until "copy as image" is used.
             screenshotRect?.let { r.strokeRect(it, chromePen(1.6)) }
+
+            // Crop mode: the hidden rest of the picture, dimmed, so the frame can be judged against it.
+            cropItem?.let { img ->
+                paintClippedToPage(r, cropPage) {
+                    r.saveLayerAlpha(img.fullBounds(), 0.35)
+                    r.drawImage(img.image, img.fullRect(), img.orientation, img.angle, null)
+                    r.restore()
+                }
+            }
 
             // Selection chrome.
             val accent = chromePen(1.3)

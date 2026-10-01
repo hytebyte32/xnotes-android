@@ -165,7 +165,7 @@ class PdfBoxRenderer(
     // stored quarter turn to the pixels, then place it like any other bitmap. A vector (SVG) source
     // has no native pixels, so it rasterizes at the placed size supersampled for print instead of at
     // the cap; the decode box is pre-swapped for quarter turns (dest already carries the turned box).
-    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double) {
+    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double, crop: Rect?) {
         if (dest.w <= 0.0 || dest.h <= 0.0) return
         val turned = orientation % 180 != 0
         val (reqW, reqH) = if (ImageDecoder.isVector(image.file.path)) {
@@ -180,6 +180,14 @@ class PdfBoxRenderer(
         if (o != 0) {
             val m = android.graphics.Matrix().apply { postRotate(o.toFloat()) }
             bmp = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        }
+        if (crop != null) {
+            // The upright pixels, cut to the visible part; the placed box is that part.
+            val x0 = (crop.x * bmp.width).toInt().coerceIn(0, bmp.width - 1)
+            val y0 = (crop.y * bmp.height).toInt().coerceIn(0, bmp.height - 1)
+            val x1 = kotlin.math.ceil((crop.x + crop.w) * bmp.width).toInt().coerceIn(x0 + 1, bmp.width)
+            val y1 = kotlin.math.ceil((crop.y + crop.h) * bmp.height).toInt().coerceIn(y0 + 1, bmp.height)
+            bmp = Bitmap.createBitmap(bmp, x0, y0, x1 - x0, y1 - y0)
         }
         if (angle == 0.0) placeBitmap(bmp, dest, multiply = false) else placeTurnedBitmap(bmp, dest, angle)
     }

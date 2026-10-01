@@ -832,6 +832,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         onTextEditStart = { field -> editingField = field; refreshTextBar() },
         onTextEditEnd = { editingField = null; refreshTextBar() },
         onSelectionMenu = { rect -> selectionMenu = rect },
+        onCropChanged = { isCropping = it },
         onScreenshotMenu = { rect -> screenshotMenu = rect },
         onContextMenu = { vp, content, locked -> contextMenu = ContextMenuTarget(vp.x, vp.y, content, locked) },
         onAddPageAtEnd = { addPageAtEnd() },
@@ -1163,6 +1164,11 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     override fun cutSelection() = controller.cutSelection()
     override fun duplicateSelection() = controller.duplicateSelection()
     override fun lockSelection() = controller.lockSelection()
+    override val canCropSelection: Boolean get() = controller.canCropSelection()
+    override var isCropping by mutableStateOf(false)
+        private set
+    override fun beginCrop() = controller.beginCrop()
+    override fun endCrop() = controller.endCrop()
     override fun unlockItem(item: com.xnotes.core.model.CanvasItem) = controller.unlockItem(item)
     override fun dismissSelectionMenu() { selectionMenu = null }
     override fun dismissContextMenu() { contextMenu = null }

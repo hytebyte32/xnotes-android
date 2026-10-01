@@ -241,6 +241,9 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         j.name("src_h").value(item.image.height)
         if (item.orientation != 0) j.name("orientation").value(item.orientation)
         if (item.angle != 0.0) j.name("angle").value(item.angle)
+        if (item.isCropped) {
+            j.name("crop").beginArray().value(item.crop.x).value(item.crop.y).value(item.crop.w).value(item.crop.h).endArray()
+        }
         if (item.locked) j.name("locked").value(true)
         j.endObject()
     }
@@ -434,6 +437,7 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         val orientation: Int,
         val angle: Double,
         val locked: Boolean,
+        val crop: Rect? = null,
     )
 
     private fun parseManifest(p: JsonPull): ParsedManifest {
@@ -542,6 +546,7 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         var srcH = 0
         var orientation = 0
         var angle = 0.0
+        var crop: Rect? = null
         var shape: String? = null
         var start: Pt? = null
         var end: Pt? = null
@@ -597,6 +602,7 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                 "src_h" -> s.srcH = intOr(p, 0)
                 "orientation" -> s.orientation = intOr(p, 0)
                 "angle" -> s.angle = doubleOr(p, 0.0)
+                "crop" -> s.crop = rectOrNull(p)
                 "shape" -> s.shape = stringOr(p, "")
                 "start" -> s.start = ptOrNull(p)
                 "end" -> s.end = ptOrNull(p)
@@ -627,7 +633,7 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                     pending.add(
                         PendingImage(
                             items.size + pending.size, asset, s.rect, s.srcW, s.srcH,
-                            s.orientation, s.angle, s.locked,
+                            s.orientation, s.angle, s.locked, s.crop,
                         ),
                     )
                 }
@@ -764,7 +770,7 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
             h = probed.height
         }
         val rect = spec.rect ?: Rect(0.0, 0.0, w.toDouble(), h.toDouble())
-        return ImageItem(ImageData(file, w, h), rect, spec.orientation, spec.angle)
+        return ImageItem(ImageData(file, w, h), rect, spec.orientation, spec.angle, spec.crop?.takeIf { it.w > 0.0 && it.h > 0.0 } ?: ImageItem.FULL_CROP)
             .also { it.locked = spec.locked }
     }
 

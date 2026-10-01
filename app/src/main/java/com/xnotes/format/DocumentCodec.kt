@@ -347,6 +347,9 @@ class DocumentCodec(
         // Additive fields: written only when turned, so older readers stay compatible.
         if (item.orientation != 0) j.name("orientation").value(item.orientation)
         if (item.angle != 0.0) j.name("angle").value(item.angle)
+        if (item.isCropped) {
+            j.name("crop").beginArray().value(item.crop.x).value(item.crop.y).value(item.crop.w).value(item.crop.h).endArray()
+        }
         if (item.locked) j.name("locked").value(true)
         j.endObject()
     }
@@ -609,6 +612,7 @@ class DocumentCodec(
         val orientation: Int,
         val angle: Double,
         val locked: Boolean,
+        val crop: Rect? = null,
     )
 
     /**
@@ -772,6 +776,7 @@ class DocumentCodec(
         var srcH = 0
         var orientation = 0
         var angle = 0.0
+        var crop: Rect? = null
         var pos: Pt? = null
         var width = TextItem.DEFAULT_WIDTH
         var height = 0.0
@@ -833,6 +838,7 @@ class DocumentCodec(
                 "src_h" -> s.srcH = intOr(p, 0)
                 "orientation" -> s.orientation = intOr(p, 0)
                 "angle" -> s.angle = doubleOr(p, 0.0)
+                "crop" -> s.crop = rectOrNull(p)
                 "pos" -> s.pos = ptOrNull(p)
                 "width" -> s.width = doubleOr(p, TextItem.DEFAULT_WIDTH)
                 "height" -> s.height = doubleOr(p, 0.0)
@@ -868,7 +874,7 @@ class DocumentCodec(
                     pending.add(
                         PendingImage(
                             items.size + pending.size, asset, s.rect, s.srcW, s.srcH,
-                            s.orientation, s.angle, s.locked,
+                            s.orientation, s.angle, s.locked, s.crop,
                         ),
                     )
                 }
@@ -1094,7 +1100,7 @@ class DocumentCodec(
             h = probed.height
         }
         val rect = spec.rect ?: Rect(0.0, 0.0, w.toDouble(), h.toDouble())
-        return ImageItem(ImageData(file, w, h), rect, spec.orientation, spec.angle)
+        return ImageItem(ImageData(file, w, h), rect, spec.orientation, spec.angle, spec.crop?.takeIf { it.w > 0.0 && it.h > 0.0 } ?: ImageItem.FULL_CROP)
             .also { it.locked = spec.locked }
     }
 

@@ -505,6 +505,11 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
      * Pin the selection where it is, then put the selection away, since a locked item cannot stay
      * selected. A held finger over it is the only way back, and it offers exactly that.
      */
+    override val canCropSelection: Boolean get() = false
+    override val isCropping: Boolean get() = false
+    override fun beginCrop() {}
+    override fun endCrop() {}
+
     override fun lockSelection() {
         if (selection.isEmpty) return
         val items = selection.items.toList()

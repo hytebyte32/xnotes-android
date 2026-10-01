@@ -79,6 +79,14 @@ interface SelectionMenuHost {
     /** The toolbar's ink swatches and recently picked colours, offered by the restyle popup. */
     val hostToolbarColors: List<Rgba>
     val hostRecentColors: List<Rgba>
+
+    /** True when the selection is one image that can be cropped. */
+    val canCropSelection: Boolean
+
+    /** True while the selected image's crop frame is being adjusted. */
+    val isCropping: Boolean
+    fun beginCrop()
+    fun endCrop()
 }
 
 /**
@@ -115,7 +123,12 @@ fun SelectionMenu(host: SelectionMenuHost) {
             .background(palette.menuBg.toComposeColor())
             .border(1.dp, palette.border.toComposeColor(), MaterialTheme.shapes.medium),
     ) {
+        if (host.isCropping) {
+            ActionIcon(XnotesIcons.check, stringResource(R.string.crop_done)) { host.endCrop() }
+            return@Row
+        }
         ActionIcon(XnotesIcons.trash, stringResource(R.string.delete)) { host.deleteSelection() }
+        if (host.canCropSelection) ActionIcon(XnotesIcons.crop, stringResource(R.string.crop)) { host.beginCrop() }
         ActionIcon(XnotesIcons.cut, stringResource(R.string.cut)) { host.cutSelection() }
         ActionIcon(XnotesIcons.copy, stringResource(R.string.copy)) { host.copySelection(); host.dismissSelectionMenu() }
         ActionIcon(XnotesIcons.front, stringResource(R.string.bring_to_front)) { host.bringToFront(); host.dismissSelectionMenu() }

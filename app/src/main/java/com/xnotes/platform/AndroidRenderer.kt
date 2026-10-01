@@ -305,12 +305,13 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
     // source) so a huge photo never fully decodes; the quarter turn and the free angle are applied
     // as one canvas rotation about the destination centre (they share it, so they simply add), the
     // rect already carrying the quarter-turned (w/h-swapped) box.
-    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double) {
+    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double, crop: Rect?) {
         if (dest.w <= 0.0 || dest.h <= 0.0) return
-        val devW = (dest.w * scaleX).toInt()
-        val devH = (dest.h * scaleY).toInt()
+        // A crop shows part of a larger picture: size the decode for the whole of it, not the visible part.
+        val devW = (dest.w * scaleX / (crop?.w ?: 1.0)).toInt()
+        val devH = (dest.h * scaleY / (crop?.h ?: 1.0)).toInt()
         val o = ((orientation % 360) + 360) % 360
-        if (o == 0 && angle == 0.0 && drawVectorSlice(image, dest, devW, devH)) return
+        if (crop == null && o == 0 && angle == 0.0 && drawVectorSlice(image, dest, devW, devH)) return
         val turned = o == 90 || o == 270
         val reqW = (if (turned) devH else devW).coerceIn(1, DECODE_CAP_PX)
         val reqH = (if (turned) devW else devH).coerceIn(1, DECODE_CAP_PX)
@@ -321,8 +322,30 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
         canvas.save()
         canvas.translate(((dest.left + dest.right) / 2.0).toFloat(), ((dest.top + dest.bottom) / 2.0).toFloat())
         if (degrees != 0.0) canvas.rotate(degrees.toFloat())
-        canvas.drawBitmap(bmp, null, RectF(-uw / 2f, -uh / 2f, uw / 2f, uh / 2f), bitmapPaint)
+        val src = crop?.let { cropSource(it, o, bmp.width, bmp.height) }
+        canvas.drawBitmap(bmp, src, RectF(-uw / 2f, -uh / 2f, uw / 2f, uh / 2f), bitmapPaint)
         canvas.restore()
+    }
+
+    /**
+     * The part of the decoded bitmap a crop shows. [crop] is in the upright, turned frame; the bitmap
+     * is as stored, so the fractions are carried back through the quarter turn [o].
+     */
+    private fun cropSource(crop: Rect, o: Int, bw: Int, bh: Int): android.graphics.Rect {
+        val u0 = crop.x
+        val v0 = crop.y
+        val u1 = crop.x + crop.w
+        val v1 = crop.y + crop.h
+        val (x0, y0, x1, y1) = when (o) {
+            90 -> listOf(v0, 1.0 - u1, v1, 1.0 - u0)
+            180 -> listOf(1.0 - u1, 1.0 - v1, 1.0 - u0, 1.0 - v0)
+            270 -> listOf(1.0 - v1, u0, 1.0 - v0, u1)
+            else -> listOf(u0, v0, u1, v1)
+        }
+        return android.graphics.Rect(
+            (x0 * bw).toInt().coerceIn(0, bw - 1), (y0 * bh).toInt().coerceIn(0, bh - 1),
+            kotlin.math.ceil(x1 * bw).toInt().coerceIn(1, bw), kotlin.math.ceil(y1 * bh).toInt().coerceIn(1, bh),
+        )
     }
 
     /**

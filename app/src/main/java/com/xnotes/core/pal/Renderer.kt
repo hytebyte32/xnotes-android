@@ -175,10 +175,10 @@ interface Renderer {
      * (0/90/180/270) and then [angle] radians clockwise about [dest]'s centre. The backend decodes
      * only as large as [dest] needs, so a big photo is never fully decoded into memory. A placed
      * bitmap is the one thing that cannot rotate by moving its own points, which is why this is the
-     * single primitive that takes a free angle. Default is a no-op for backends that don't place
+     * single primitive that takes a free angle. [crop], when given, is the visible part of the whole image as fractions (left, top, width, height) of its upright frame; [dest] is that visible part. Default is a no-op for backends that don't place
      * images.
      */
-    fun drawImage(image: ImageData, dest: Rect, orientation: Int = 0, angle: Double = 0.0) {}
+    fun drawImage(image: ImageData, dest: Rect, orientation: Int = 0, angle: Double = 0.0, crop: Rect? = null) {}
 
     fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags = TextFlags())
 
