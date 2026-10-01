@@ -330,6 +330,9 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
             return
         }
         scene.upsert(item, meshed.parts, meshed.bounds, committingWetStroke)
+        // The triangles are queued and the bounds are banked, so the ribbon cache is only dead weight now.
+        // It is rebuilt from the samples if a hit test or an eraser pass wants it again.
+        if (!committingWetStroke) (item as? com.xnotes.core.model.Stroke)?.releaseGeometry()
     }
 
     /**
@@ -397,8 +400,30 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     private fun rebuildScene() {
         scene.reset()
         vectorMeshGen.clear()
-        scene.batch { for (item in document.items) pushItem(item) }
+        // In chunks, waiting for the render thread to take each one. Meshing the whole document into one
+        // batch held every triangle in Java memory at once, about 6 KB a stroke, which is what ran a
+        // 100k-stroke canvas out of heap.
+        val items = ArrayList(document.items)
+        var backPressure = view.isAttachedToWindow && view.width > 0
+        var i = 0
+        while (i < items.size) {
+            val end = minOf(i + LOAD_CHUNK, items.size)
+            scene.batch { for (k in i until end) pushItem(items[k]) }
+            i = end
+            if (backPressure && i < items.size) backPressure = waitForRenderThread()
+        }
         scene.setOrder(document.items)
+    }
+
+    /** Ask for a frame and wait, briefly, until the render thread has applied what was queued. False if it never did. */
+    private fun waitForRenderThread(): Boolean {
+        view.publish()
+        val deadline = System.nanoTime() + RENDER_WAIT_NS
+        while (scene.hasPendingEdits()) {
+            if (System.nanoTime() > deadline) return false
+            Thread.sleep(2)
+        }
+        return true
     }
 
     /** Repaint the canvas with whatever the model currently says. */
@@ -1710,6 +1735,8 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
 
     companion object {
         private const val LOD_SETTLE_MS = 300L
+        private const val LOAD_CHUNK = 2000
+        private const val RENDER_WAIT_NS = 400_000_000L
         /** Zoom step for the keyboard, matching a comfortable notch of a pinch. */
         const val ZOOM_STEP = 1.25
 
