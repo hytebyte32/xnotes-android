@@ -171,6 +171,7 @@ fun ColorPalette(
                         while (true) {
                             val event = awaitPointerEvent()
                             val ch = event.changes.firstOrNull { it.id == id } ?: break
+                            val step = ch.positionChange() // read before consuming: a consumed change reports no movement
                             ch.consume()
                             if (pickMode) {
                                 val dx = ch.position.x - down.position.x
@@ -182,7 +183,6 @@ fun ColorPalette(
                                     (((ang + sweep / 2.0) % 360.0 + 360.0) % 360.0 / sweep).toInt().coerceIn(0, colorsNow.size - 1)
                                 }
                             } else {
-                                val step = ch.positionChange()
                                 bx = (bx + step.x).coerceIn(lo(wNow), hi(wNow))
                                 by = (by + step.y).coerceIn(lo(hNow), hi(hNow))
                                 px = bx
