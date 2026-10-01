@@ -1066,7 +1066,7 @@ class BenchActivity : ComponentActivity() {
         var step = "start"
         try {
             canvas = null
-            stage.let { step = "baseline" }
+            step = "baseline"
             val ed = InfiniteEditor(this).also { canvas = it }
             mount(ed.surfaces)
             val h0 = settledMb()
