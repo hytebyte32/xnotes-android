@@ -1209,6 +1209,7 @@ private fun EditorPane(
                     .background((if (focused) palette.accent else palette.border).toComposeColor()),
             )
         }
+        com.xnotes.ui.TabStrip(editor)
         if (editor.canvasOpen) {
             val canvas = editor.infinite
             val bar: @Composable () -> Unit = {

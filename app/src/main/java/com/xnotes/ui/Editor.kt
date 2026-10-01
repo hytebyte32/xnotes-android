@@ -634,6 +634,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
      * main thread; the model swap itself hops back to the main thread.
      */
     suspend fun openCanvasAsync(uri: String, name: String?): Boolean {
+        findTabByUri(uri, canvas = true)?.let { selectTab(it.id); return true }
         val doc = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             runCatching {
                 appContext.contentResolver.openInputStream(android.net.Uri.parse(uri))?.use {
@@ -650,8 +651,10 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         doc: com.xnotes.core.infinite.InfiniteDocument,
         uri: String?,
         displayName: String?,
+        register: Boolean = true,
     ) {
         flushAutosave() // a paged note may be open underneath; do not leave its edits unwritten
+        if (register) stashActiveTab()
         doc.path = uri
         doc.displayName = displayName
         val canvas = infinite
@@ -667,6 +670,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         lastCanvasStamp = canvasAutosaveUri?.let { stampOf(it) }
         canvasOpen = true
         noteOpen = true
+        if (register) registerTab(canvas = true)
     }
 
     /** Write [doc] to [uri] through a private temp, so a failed encode never truncates a good file. */
@@ -1316,7 +1320,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         // that write out rather than pulling the source out from under it.
         val pending = noteWriteJob
         openPdfTemp?.let { old ->
-            if (old != keep) autosaveScope.launch { pending?.join(); old.delete() }
+            if (old != keep && tabs.none { it.paged?.pdfFile == old }) autosaveScope.launch { pending?.join(); old.delete() }
         }
         openPdfTemp = keep
     }
@@ -1994,6 +1998,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         flushCanvasAutosave()
         saveSession()
         saveCanvasSession()
+        saveTabs()
         secondary?.persist() // the other pane's note has to be flushed on pause too
     }
 
@@ -2035,13 +2040,15 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
      *  main thread; the apply runs on the caller's (main) dispatcher. A no-op when
      *  there is no saved session. Drives the launch loader, so it's safe to await. */
     suspend fun restoreSession() {
+        val manifest = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { readTabManifest() }
         // A canvas was open last time: it takes precedence, since only one document is ever on top.
         val canvasDoc = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             if (canvasSession.exists()) canvasSession.load() else null
         }
         if (canvasDoc != null) {
-            openCanvasDocument(canvasDoc, canvasDoc.path, canvasDoc.displayName)
+            openCanvasDocument(canvasDoc, canvasDoc.path, canvasDoc.displayName, register = false)
             sessionLoaded = true
+            adoptRestoredTabs(manifest, restoredCanvas = true)
             return
         }
         val snap = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { session.load() }
@@ -2071,6 +2078,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             view.requestRender()
         }
         sessionLoaded = true
+        adoptRestoredTabs(manifest, restoredCanvas = if (snap != null) false else null)
     }
 
     private fun refreshView() {
@@ -2453,6 +2461,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
      */
     suspend fun openAsync(uri: String, name: String? = null) {
         if (opening) return
+        findTabByUri(uri, canvas = false)?.let { selectTab(it.id); return }
         openCancelled.set(false)
         opening = true
         val t0 = System.nanoTime()
@@ -2482,11 +2491,14 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             doc.path = uri
             doc.displayName = name
             doc.dirty = false
+            stashActiveTab()
             replaceDocument(doc)
             state.openFileBytes = fileBytes
             state.lastSaveBytes = fileBytes // the on-disk size, until the first autosave rewrites it
             maybeBindAutosave(uri) // resume autosaving if this note lives in the granted folder
+            canvasOpen = false
             noteOpen = true // push the editor on top of backstage (only on a successful open)
+            registerTab(canvas = false)
             rememberOpened(uri, name)
         } catch (e: XNoteFormatException) {
             message = appContext.getString(R.string.err_not_xnotes)
@@ -3474,7 +3486,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             dirty = false
             // Only reset to a fresh page if the deleted note is actually on screen; while on backstage
             // (noteOpen == false) the detached buffer is left as-is so we don't pop into a blank editor.
-            autosaveScope.launch { if (state.document === deleted && noteOpen) newNote() }
+            autosaveScope.launch { if (state.document === deleted && noteOpen) { dropActiveTab(); newNote() } }
         }
     }
 
@@ -4781,7 +4793,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         }
     }
 
-    private fun replaceDocument(doc: Document) {
+    private fun replaceDocument(doc: Document, tab: DocTab? = null) {
         saveViewState() // remember the outgoing folder note's view before switching away
         flowText.endSession() // flushes the typing burst so the autosave below carries it
         flushAutosave() // save the outgoing note if it was autosaving to the folder
@@ -4801,7 +4813,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         history.clear()
         state.invalidateAllCaches()
         state.relayout()
-        installInitialView(doc.path) // this note's remembered view, or fit width — never the last note's
+        if (tab != null && tab.zoom > 0.0) installTabView(tab) else installInitialView(doc.path) // a tab's own view, else the note's remembered one or fit width
         refreshContent()
         view.requestRender()
     }
@@ -6455,6 +6467,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     fun newNote() {
         saveViewState()
         flushAutosave()
+        stashActiveTab()
         autosaveUri = null
         state.document = blankDocument().also { stampNewNoteDefaults(it) }
         rebuildPdfSource() // close the outgoing note's PDF source (a blank note has none)
@@ -6469,7 +6482,357 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         installInitialView(null) // a fresh in-memory note: fit width
         refreshContent()
         view.requestRender()
+        canvasOpen = false
         noteOpen = true // push the editor on top of backstage
+        registerTab(canvas = false)
+    }
+
+    // --- tabs ---
+    //
+    // The primary editor keeps a strip of open documents. Each tab is either *live* (its document
+    // object is held in memory, so switching is instant) or *dormant* (only a cache on disk, loaded
+    // when picked). The four most recently used tabs stay live; older ones are cached and let go.
+    // Tabs are restored on launch. The active tab's content rides in the ordinary session store while
+    // a note is open; every other tab has its own directory under [tabsDir].
+
+    /** One open document in the strip. */
+    class DocTab(val id: String, val canvas: Boolean) {
+        var title by mutableStateOf("")
+        var uri: String? = null
+        var paged: Document? = null
+        var inf: com.xnotes.core.infinite.InfiniteDocument? = null
+        var zoom = 0.0
+        var scrollX = 0.0
+        var scrollY = 0.0
+        var zoomLocked = false
+        var overrides = com.xnotes.canvas.ViewOverrides()
+        var lastUsed = 0L
+        /** True when the in-memory document has changed since its disk cache was last written. */
+        var cacheStale = true
+        var caching = false
+        val live: Boolean get() = paged != null || inf != null
+    }
+
+    /** Tabs belong to the primary editor only; the split's second pane is a plain single document. */
+    private val tabsEnabled = pane == Pane.PRIMARY
+
+    val tabs = mutableStateListOf<DocTab>()
+    var activeTabId by mutableStateOf<String?>(null)
+        private set
+
+    private val tabsDir = java.io.File(appContext.filesDir, "tabs")
+    private val tabManifest = com.xnotes.platform.JsonStore(java.io.File(tabsDir, "tabs.json"))
+    private var tabSwapping = false
+    private val MAX_LIVE_TABS = 4
+
+    private val activeTab: DocTab? get() = tabs.firstOrNull { it.id == activeTabId }
+
+    private fun cleanTitle(raw: String?): String =
+        (raw ?: "").removeSuffix(".xnote").removeSuffix(".xcanvas")
+
+    /** The label a tab shows: the live document's own name for the active tab, else what was last stashed. */
+    fun tabLabel(t: DocTab): String {
+        val live = if (t.id != activeTabId) null else if (t.canvas) {
+            infiniteOrNull?.document?.let { it.displayName ?: it.title }
+        } else {
+            state.document.let { it.displayName ?: it.title }
+        }
+        return cleanTitle(live ?: t.title).ifBlank { appContext.getString(R.string.tab_untitled) }
+    }
+
+    private fun findTabByUri(uri: String, canvas: Boolean): DocTab? =
+        if (!tabsEnabled) null else tabs.firstOrNull { it.uri == uri && it.canvas == canvas }
+
+    /** Record the outgoing document (the active tab's) and its view into its tab, before it is replaced. */
+    private fun stashActiveTab() {
+        if (!tabsEnabled) return
+        val t = activeTab ?: return
+        if (t.canvas) {
+            val d = infiniteOrNull?.document ?: return
+            t.inf = d
+            t.uri = d.path
+            t.title = d.displayName ?: d.title
+        } else {
+            val d = state.document
+            t.paged = d
+            t.uri = d.path
+            t.title = d.displayName ?: d.title
+            if (state.didInitialFit && state.viewportW > 0) {
+                t.zoom = state.zoom
+                t.scrollX = state.scrollX
+                t.scrollY = state.scrollY
+            }
+            t.zoomLocked = zoomLocked
+            t.overrides = viewOverrides
+        }
+        t.cacheStale = true
+        t.lastUsed = System.currentTimeMillis()
+    }
+
+    /** Add the document just opened on top as a new tab and make it the active one. */
+    private fun registerTab(canvas: Boolean) {
+        if (!tabsEnabled) return
+        val t = DocTab(java.util.UUID.randomUUID().toString(), canvas)
+        if (canvas) {
+            val d = infinite.document
+            t.inf = d
+            t.uri = d.path
+            t.title = d.displayName ?: d.title
+        } else {
+            val d = state.document
+            t.paged = d
+            t.uri = d.path
+            t.title = d.displayName ?: d.title
+        }
+        t.lastUsed = System.currentTimeMillis()
+        tabs.add(t)
+        activeTabId = t.id
+        evictOldTabs()
+    }
+
+    /** Forget the active tab without touching its document (the file behind it is gone). */
+    private fun dropActiveTab() {
+        val t = activeTab ?: return
+        tabs.remove(t)
+        activeTabId = null
+        java.io.File(tabsDir, t.id).deleteRecursively()
+    }
+
+    private fun installTabView(t: DocTab) {
+        installViewOverrides(t.overrides)
+        state.pendingInitialView = InitialView.Restore(t.zoom, t.scrollX, t.scrollY)
+        state.didInitialFit = false
+        zoomLocked = t.zoomLocked
+        state.zoomLocked = t.zoomLocked
+        if (state.viewportW > 0) state.establishInitialView()
+    }
+
+    /** Keep the [MAX_LIVE_TABS] most recently used tabs in memory; cache the rest to disk and release them. */
+    private fun evictOldTabs() {
+        val others = tabs.filter { it.live && it.id != activeTabId }.sortedByDescending { it.lastUsed }
+        for (t in others.drop(MAX_LIVE_TABS - 1)) cacheTab(t, evict = true)
+    }
+
+    /** Write [t]'s document to its tab directory off-thread; with [evict], release it from memory after. */
+    private fun cacheTab(t: DocTab, evict: Boolean) {
+        val paged = t.paged
+        val inf = t.inf
+        if (paged == null && inf == null) return
+        if (!t.cacheStale) {
+            if (evict && t.id != activeTabId) releaseTab(t)
+            return
+        }
+        if (t.caching) return
+        t.caching = true
+        val dir = java.io.File(tabsDir, t.id)
+        // The snapshot is taken here on the main thread; only the encode goes off it.
+        if (paged != null) {
+            val snap = paged.snapshot()
+            val zoom = t.zoom
+            val sx = t.scrollX
+            val sy = t.scrollY
+            val locked = t.zoomLocked
+            val vo = t.overrides
+            autosaveScope.launch {
+                withContext(Dispatchers.IO) {
+                    com.xnotes.platform.SessionStore(dir, codec, pdfDir, imageDir)
+                        .save(snap, zoom, sx, sy, locked, vo, writeDocument = true)
+                }
+                t.caching = false
+                if (t.paged !== paged) return@launch
+                t.cacheStale = false
+                if (evict && t.id != activeTabId) releaseTab(t)
+            }
+        } else if (inf != null) {
+            val snap = inf.snapshotForWrite()
+            autosaveScope.launch {
+                withContext(Dispatchers.IO) {
+                    com.xnotes.platform.CanvasSessionStore(dir, canvasCodec, imageDir).save(snap, writeDocument = true)
+                }
+                t.caching = false
+                if (t.inf !== inf) return@launch
+                t.cacheStale = false
+                if (evict && t.id != activeTabId) releaseTab(t)
+            }
+        }
+    }
+
+    /** Let go of a tab's in-memory document (its content is cached on disk), reclaiming the big source PDF. */
+    private fun releaseTab(t: DocTab) {
+        val d = t.paged
+        t.paged = null
+        t.inf = null
+        val pdf = d?.pdfFile ?: return
+        if (pdf == state.document.pdfFile || pdf == openPdfTemp) return
+        val pending = noteWriteJob
+        autosaveScope.launch { pending?.join(); pdf.delete() }
+    }
+
+    /** Switch to tab [id]: stash the open document, then install the tab's (loading it from its cache if dormant). */
+    fun selectTab(id: String) {
+        val t = tabs.firstOrNull { it.id == id } ?: return
+        if (tabSwapping) return
+        if (id == activeTabId) {
+            if (!noteOpen) { canvasOpen = t.canvas; noteOpen = true }
+            return
+        }
+        tabSwapping = true
+        autosaveScope.launch {
+            try {
+                if (!t.live && !loadTab(t)) {
+                    tabs.remove(t)
+                    java.io.File(tabsDir, t.id).deleteRecursively()
+                    message = appContext.getString(R.string.err_tab_lost)
+                    return@launch
+                }
+                val outgoing = activeTab
+                if (outgoing != null && !outgoing.canvas) {
+                    controller.commitTextEdit()
+                    flowText.endSession()
+                }
+                flushAutosave()
+                flushCanvasAutosave()
+                stashActiveTab()
+                activeTabId = t.id
+                t.lastUsed = System.currentTimeMillis()
+                if (t.canvas) {
+                    val d = t.inf!!
+                    openCanvasDocument(d, d.path, d.displayName, register = false)
+                } else {
+                    val d = t.paged!!
+                    replaceDocument(d, t)
+                    maybeBindAutosave(d.path)
+                    canvasOpen = false
+                    noteOpen = true
+                }
+                evictOldTabs()
+            } finally {
+                tabSwapping = false
+            }
+        }
+    }
+
+    /** Load a dormant tab's document from its cache directory. */
+    private suspend fun loadTab(t: DocTab): Boolean {
+        val dir = java.io.File(tabsDir, t.id)
+        if (t.canvas) {
+            val d = withContext(Dispatchers.IO) {
+                com.xnotes.platform.CanvasSessionStore(dir, canvasCodec, imageDir).load()
+            } ?: return false
+            t.inf = d
+        } else {
+            val s = withContext(Dispatchers.IO) {
+                com.xnotes.platform.SessionStore(dir, codec, pdfDir, imageDir).load()
+            } ?: return false
+            t.paged = s.document
+            t.zoom = s.zoom
+            t.scrollX = s.scrollX
+            t.scrollY = s.scrollY
+            t.zoomLocked = s.zoomLocked
+            t.overrides = s.viewOverrides
+        }
+        t.cacheStale = false
+        return true
+    }
+
+    /** Close tab [id], discarding its cache. Closing the active tab moves to the most recent other one, or home. */
+    fun closeTab(id: String) {
+        val t = tabs.firstOrNull { it.id == id } ?: return
+        if (tabSwapping) return
+        if (id != activeTabId) {
+            tabs.remove(t)
+            java.io.File(tabsDir, id).deleteRecursively()
+            releaseTab(t)
+            saveTabs()
+            return
+        }
+        if (!t.canvas) {
+            controller.commitTextEdit()
+            flowText.endSession()
+        }
+        flushAutosave() // a folder note keeps its edits; anything else is dropped with its tab
+        flushCanvasAutosave()
+        val next = tabs.filter { it !== t }.maxByOrNull { it.lastUsed }
+        tabs.remove(t)
+        activeTabId = null
+        java.io.File(tabsDir, id).deleteRecursively()
+        if (next != null) selectTab(next.id) else goHome()
+        saveTabs()
+    }
+
+    /** Write every tab's cache that is out of date, and the manifest that lists them. */
+    private fun saveTabs() {
+        if (!tabsEnabled) return
+        // While a note is open its content is in the session store; at home it needs a cache of its own.
+        val owner = if (noteOpen) activeTabId else null
+        stashActiveTab()
+        for (t in tabs) if (t.live && t.id != owner && t.cacheStale) cacheTab(t, evict = false)
+        runCatching {
+            val arr = org.json.JSONArray()
+            for (t in tabs) {
+                arr.put(
+                    org.json.JSONObject()
+                        .put("id", t.id)
+                        .put("canvas", t.canvas)
+                        .put("uri", t.uri ?: "")
+                        .put("title", t.title)
+                        .put("lastUsed", t.lastUsed),
+                )
+            }
+            tabManifest.write(
+                org.json.JSONObject()
+                    .put("active", activeTabId ?: "")
+                    .put("owner", owner ?: "")
+                    .put("tabs", arr),
+            )
+        }
+    }
+
+    /** The saved tab list, read off-thread. Null when there is none. */
+    private fun readTabManifest(): org.json.JSONObject? =
+        tabManifest.read().takeIf { it.has("tabs") }
+
+    /**
+     * Rebuild the strip after a launch: every saved tab comes back dormant, except the one whose
+     * content the session store just restored, which becomes live and active.
+     */
+    private fun adoptRestoredTabs(m: org.json.JSONObject?, restoredCanvas: Boolean?) {
+        if (!tabsEnabled) return
+        val owner = m?.optString("owner", "").orEmpty()
+        val arr = m?.optJSONArray("tabs")
+        if (arr != null) {
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val id = o.optString("id", "")
+                if (id.isEmpty()) continue
+                val t = DocTab(id, o.optBoolean("canvas"))
+                t.title = o.optString("title", "")
+                t.uri = o.optString("uri", "").ifEmpty { null }
+                t.lastUsed = o.optLong("lastUsed")
+                t.cacheStale = false
+                // A dormant tab with no cache left can never open; the owner is exempt (its content is the session's).
+                if (id != owner && !java.io.File(tabsDir, id).exists()) continue
+                tabs.add(t)
+            }
+        }
+        if (restoredCanvas != null) {
+            val t = tabs.firstOrNull { it.id == owner && it.canvas == restoredCanvas }
+                ?: DocTab(java.util.UUID.randomUUID().toString(), restoredCanvas).also { tabs.add(it) }
+            if (restoredCanvas) {
+                val d = infinite.document
+                t.inf = d
+                t.uri = d.path
+                t.title = d.displayName ?: d.title
+            } else {
+                val d = state.document
+                t.paged = d
+                t.uri = d.path
+                t.title = d.displayName ?: d.title
+            }
+            t.cacheStale = true
+            t.lastUsed = System.currentTimeMillis()
+            activeTabId = t.id
+        }
     }
 
     // --- split view ---

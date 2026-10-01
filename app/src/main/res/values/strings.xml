@@ -820,4 +820,8 @@
     <string name="toolbar_size_compact">Compact</string>
     <string name="toolbar_size_regular">Regular</string>
     <string name="toolbar_size_comfortable">Comfortable</string>
+    <string name="tab_untitled">Untitled</string>
+    <string name="tab_new">New tab</string>
+    <string name="tab_close">Close tab</string>
+    <string name="err_tab_lost">That tab could not be reopened</string>
 </resources>
