@@ -212,6 +212,7 @@ private fun ToolbarItemView(
 
         ToolbarItem.IMAGE -> ImageMenu(editor, onInsertImage, onAddStickers)
         ToolbarItem.EXPORT -> ExportButton(isCanvas = false, onExport = onExport)
+        ToolbarItem.ADD_PAGE -> ToolbarIcon(XnotesIcons.page, stringResource(R.string.add_page)) { editor.addDefaultPage() }
 
         ToolbarItem.UNDO -> ToolbarIcon(XnotesIcons.undo, stringResource(R.string.undo), enabled = editor.canUndo) { editor.undo() }
         ToolbarItem.REDO -> ToolbarIcon(XnotesIcons.redo, stringResource(R.string.redo), enabled = editor.canRedo) { editor.redo() }

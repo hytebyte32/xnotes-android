@@ -5038,12 +5038,13 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
      * note stays uniform (falling back to A4 portrait). Undoable; relayouts and refreshes. Returns
      * the new page's final index.
      */
-    private fun insertBlankPageAt(index: Int, refIndex: Int): Int {
+    private fun insertBlankPageAt(index: Int, refIndex: Int, setup: (Page) -> Unit = {}): Int {
         val pages = state.document.pages
         val ref = pages.getOrNull(refIndex) ?: pages.getOrNull(index) ?: pages.lastOrNull()
         val (w, h) = if (ref != null) ref.width to ref.height else PageSize.A4.pixels(Orientation.PORTRAIT, state.document.dpi)
         val at = index.coerceIn(0, pages.size)
         val page = Page(w, h)
+        setup(page)
         controller.clearSelection() // inserting shifts later page indices; drop any stale item selection
         pages.add(at, page)
         history.push(AddPage(state.document, page, at))
@@ -5062,6 +5063,19 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         state.clampScroll()
         refreshContent()
         view.requestRender()
+    }
+
+    /** Toolbar "New page": a page right under the current one in the saved new-note style, then go to it. */
+    fun addDefaultPage() {
+        val current = state.currentPageIndex()
+        val at = insertBlankPageAt(current + 1, current) { page ->
+            val style = settings.newNoteStyle
+            if (!style.isEmpty) {
+                page.style = style
+                TemplateLibrary.embed(state.document, style.template)
+            }
+        }
+        goToPage(at)
     }
 
     /** Toolbar "Add page": insert a blank page right after the current one (sized from it) and go to it. */

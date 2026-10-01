@@ -46,6 +46,9 @@ enum class ToolbarItem(val id: String) {
     /** One-tap export of the open note or canvas. */
     EXPORT("export"),
 
+    /** Paged notes only: a new page under the current one, in the saved new-note style. */
+    ADD_PAGE("add_page"),
+
     /** Canvas only: saved views, which are what page numbers are on an unbounded surface. */
     WAYPOINTS("waypoints"),
 
@@ -156,6 +159,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             ToolbarItem.RULER to ToolbarItem.SHAPE,
             ToolbarItem.PROTRACTOR to ToolbarItem.RULER,
             ToolbarItem.EXPORT to ToolbarItem.REDO,
+            ToolbarItem.ADD_PAGE to ToolbarItem.REDO,
         )
 
         /**

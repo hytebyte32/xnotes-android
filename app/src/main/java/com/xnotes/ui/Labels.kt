@@ -79,6 +79,7 @@ val ToolbarItem.labelRes: Int
         ToolbarItem.FULLSCREEN -> R.string.toolbar_fullscreen
         ToolbarItem.COLORS -> R.string.toolbar_colours
         ToolbarItem.EXPORT -> R.string.toolbar_export
+        ToolbarItem.ADD_PAGE -> R.string.add_page
         ToolbarItem.WAYPOINTS -> R.string.toolbar_waypoints
         ToolbarItem.MINIMAP -> R.string.toolbar_minimap
     }
