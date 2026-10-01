@@ -636,12 +636,35 @@ class InfiniteInteraction(
             tool = it
             onToolChanged(it)
         }
+        selection()?.let { finishCrop(it) }
         selection()?.clear()
         bandRect = null
         lassoPoints.clear()
         onLiftSelection(emptyList(), LiftTransform.NONE)
         onSelectionChanged()
         requestRender()
+    }
+
+    /** Enter crop mode on the selected image. */
+    fun beginCrop() {
+        val sel = selection() ?: return
+        if (sel.beginCrop()) {
+            onSelectionChanged()
+            requestRender()
+        }
+    }
+
+    /** Leave crop mode, recording the crop as one undoable edit. */
+    fun endCrop() {
+        val sel = selection() ?: return
+        finishCrop(sel)
+        onSelectionChanged()
+        requestRender()
+    }
+
+    private fun finishCrop(sel: CanvasSelection) {
+        if (!sel.cropping) return
+        onCommitSelection(sel.endCrop())
     }
 
     /**
@@ -651,6 +674,18 @@ class InfiniteInteraction(
     private fun tryGrabSelection(sel: CanvasSelection, at: Pt): Boolean {
         if (sel.isEmpty) return false
         val tolerance = HANDLE_TOUCH_PX / viewport.zoom
+        if (sel.cropping) {
+            val edge = sel.hitHandle(at, tolerance)
+            if (edge != null) {
+                grabHandle = edge
+                liftedTransform = false
+                mode = CanvasPointerMode.RESIZE
+                return true
+            }
+            // Inside the crop frame nothing moves: the picture stays put while its edges are pulled.
+            if (sel.contains(at)) return true
+            finishCrop(sel)
+        }
         val grip = sel.rotateGrip(OverlayTessellator.GRIP_ARM_PX / viewport.zoom)
         if (grip != null && at.distanceTo(grip) <= tolerance) {
             sel.beginTransform(at)
@@ -829,6 +864,12 @@ class InfiniteInteraction(
         val handle = grabHandle ?: return
         val at = viewport.viewportToContent(Pt(vx, vy))
         transformPointer = at
+        if (sel.cropping) {
+            sel.cropLive(handle, at)
+            onSelectionChanged()
+            requestRender()
+            return
+        }
         if (liftedTransform) {
             val map = sel.previewResize(handle, at) ?: return
             onLiftSelection(sel.items, LiftTransform.of(map, sel.transformPivot ?: Pt.ZERO))
@@ -876,6 +917,12 @@ class InfiniteInteraction(
         val handle = grabHandle
         val wasResize = handle != null
         grabHandle = null
+        if (sel.cropping) {
+            // The edit is recorded once, when crop mode ends, so a whole session undoes as one step.
+            onSelectionChanged()
+            requestRender()
+            return
+        }
         // Finger up on a lifted drag: apply the whole thing to the model once, then hand the drawing
         // back to it.
         if (liftedTransform) {

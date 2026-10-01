@@ -12,6 +12,7 @@ import com.xnotes.core.history.MoveItems
 import com.xnotes.core.history.TransformItems
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.GeometrySnapshot
+import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.ShapeItem
 
 /**
@@ -46,11 +47,15 @@ class CanvasSelection(private val doc: InfiniteDocument) {
     private var startGrabAngle: Double? = null
 
     fun select(next: List<CanvasItem>) {
+        cropImage = null
+        cropBefore = null
         items = next
         box = boundsOf(next)?.let { Obb.fromAabb(it) }
     }
 
     fun clear() {
+        cropImage = null
+        cropBefore = null
         items = emptyList()
         box = null
         startSnapshots = emptyList()
@@ -141,7 +146,61 @@ class CanvasSelection(private val doc: InfiniteDocument) {
 
     /** The rotate grip's centre, [arm] content pixels past the box's top edge. */
     fun rotateGrip(arm: Double): Pt? =
-        if (pointShape != null) null else box?.let { ResizeMath.obbRotateGrip(it, arm) }
+        if (pointShape != null || cropping) null else box?.let { ResizeMath.obbRotateGrip(it, arm) }
+
+
+
+    // --- crop ---
+
+    /** The image being cropped, or null. While set, the box is the image's own and the grip is gone. */
+    var cropImage: ImageItem? = null
+        private set
+    private var cropBefore: GeometrySnapshot? = null
+
+    val cropping: Boolean get() = cropImage != null
+
+    /** One unlocked, unturned image selected: the only thing that can be cropped. */
+    fun canCrop(): Boolean {
+        val img = items.singleOrNull() as? ImageItem ?: return false
+        return !img.locked && img.angle == 0.0
+    }
+
+    fun beginCrop(): Boolean {
+        if (!canCrop()) return false
+        val img = items.single() as ImageItem
+        cropImage = img
+        cropBefore = img.snapshotGeometry()
+        refreshBox()
+        return true
+    }
+
+    /** Drag the crop side(s) [handle] stands for to [pointer]; the picture itself stays put. */
+    fun cropLive(handle: HandleId, pointer: Pt) {
+        val img = cropImage ?: return
+        img.cropEdge(
+            left = handle == HandleId.L || handle == HandleId.TL || handle == HandleId.BL,
+            right = handle == HandleId.R || handle == HandleId.TR || handle == HandleId.BR,
+            top = handle == HandleId.T || handle == HandleId.TL || handle == HandleId.TR,
+            bottom = handle == HandleId.B || handle == HandleId.BL || handle == HandleId.BR,
+            p = pointer,
+            minSize = ResizeMath.MIN_SIZE,
+        )
+        doc.itemsChanged(items)
+        refreshBox()
+    }
+
+    /** Leave crop mode, returning the undoable edit when the crop actually changed. */
+    fun endCrop(): Command? {
+        val img = cropImage ?: return null
+        val before = cropBefore
+        cropImage = null
+        cropBefore = null
+        refreshBox()
+        if (before == null) return null
+        val after = img.snapshotGeometry()
+        if (after == before) return null
+        return OnCanvas(doc, TransformItems(listOf(img), listOf(before), listOf(after)), listOf(img))
+    }
 
     /** Which handle [p] lands on, within [tolerance] content pixels, or null. */
     fun hitHandle(p: Pt, tolerance: Double): HandleId? =

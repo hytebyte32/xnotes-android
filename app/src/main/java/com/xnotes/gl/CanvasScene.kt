@@ -653,9 +653,26 @@ class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene 
         lift: LiftTransform = LiftTransform.NONE,
     ) {
         val shader = imageShader ?: return
+        if (image === cropGhost) drawImageQuad(shader, image, image.fullRect().translate(lift.dx, lift.dy), null, 0.35, frame)
         val rect = image.rect.translate(lift.dx, lift.dy)
+        drawImageQuad(shader, image, rect, if (image.isCropped) image.crop else null, 1.0, frame)
+    }
+
+    /** The whole image being cropped, shown dimmed under the visible part so the hidden rest can be seen. */
+    @Volatile
+    var cropGhost: ImageItem? = null
+
+    private fun drawImageQuad(
+        shader: ImageShader,
+        image: ImageItem,
+        rect: Rect,
+        crop: Rect?,
+        alpha: Double,
+        frame: FrameState,
+    ) {
         // Decode for the size the image actually occupies on screen right now.
-        val onScreenEdge = (maxOf(rect.w, rect.h) * frame.zoom).toInt().coerceAtLeast(1)
+        val wholeScale = if (crop != null) 1.0 / minOf(crop.w, crop.h) else 1.0
+        val onScreenEdge = (maxOf(rect.w, rect.h) * wholeScale * frame.zoom).toInt().coerceAtLeast(1)
         val texture = textures.textureFor(image.image, onScreenEdge, decodeOn)
         if (texture == 0) return
         val corners = FloatArray(8)
@@ -678,7 +695,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene 
             corners[2 * i] = (dx / frame.widthPx * 2.0 - 1.0).toFloat()
             corners[2 * i + 1] = (1.0 - dy / frame.heightPx * 2.0).toFloat()
         }
-        shader.draw(corners, texture, image.orientation / 90)
+        shader.draw(corners, texture, image.orientation / 90, alpha, crop)
         lastDrawCalls++
     }
 

@@ -24,7 +24,13 @@ class ImageShader(contextGen: Int) {
      * top-right, bottom-left, bottom-right. [rotationSteps] turns the texture a quarter turn at a
      * time, so an image's orientation costs nothing but a different set of texture coordinates.
      */
-    fun draw(corners: FloatArray, texture: Int, rotationSteps: Int, alpha: Double = 1.0) {
+    fun draw(
+        corners: FloatArray,
+        texture: Int,
+        rotationSteps: Int,
+        alpha: Double = 1.0,
+        crop: com.xnotes.core.geometry.Rect? = null,
+    ) {
         if (texture == 0) return
         program.use()
         program.set("uP0", corners[0], corners[1])
@@ -33,6 +39,8 @@ class ImageShader(contextGen: Int) {
         program.set("uP3", corners[6], corners[7])
         program.set("uRotation", ((rotationSteps % 4) + 4) % 4)
         program.set("uAlpha", alpha.coerceIn(0.0, 1.0).toFloat())
+        if (crop == null) program.set("uCrop", 0f, 0f, 1f, 1f)
+        else program.set("uCrop", crop.x.toFloat(), crop.y.toFloat(), crop.w.toFloat(), crop.h.toFloat())
         GLES30.glActiveTexture(GLES30.GL_TEXTURE0)
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture)
         program.set("uTexture", 0)
@@ -48,6 +56,7 @@ class ImageShader(contextGen: Int) {
             uniform vec2 uP2;
             uniform vec2 uP3;
             uniform int uRotation;
+            uniform vec4 uCrop;
             out vec2 vUv;
             void main() {
                 vec2 p = uP0;
@@ -57,7 +66,9 @@ class ImageShader(contextGen: Int) {
                 else if (gl_VertexID == 3) { p = uP3; uv = vec2(1.0, 1.0); }
                 // A quarter-turn orientation is a rotation of the texture coordinates about the
                 // middle, so the image itself needs no re-decoding to be turned.
-                vec2 c = uv - vec2(0.5);
+                // The crop narrows which part of the upright picture the quad shows, before the turn.
+                vec2 cropped = uCrop.xy + uv * uCrop.zw;
+                vec2 c = cropped - vec2(0.5);
                 if (uRotation == 1) c = vec2(-c.y, c.x);
                 else if (uRotation == 2) c = -c;
                 else if (uRotation == 3) c = vec2(c.y, -c.x);

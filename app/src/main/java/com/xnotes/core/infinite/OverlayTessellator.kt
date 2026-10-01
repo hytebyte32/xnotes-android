@@ -50,6 +50,7 @@ object OverlayTessellator {
         tolerance: Double,
         devicePxPerDp: Double = 1.0,
         pointHandles: List<Pt>? = null,
+        showGrip: Boolean = true,
     ): List<MeshPart> {
         if (zoom <= 0.0) return emptyList()
         val outline = MeshBuilder()
@@ -63,7 +64,7 @@ object OverlayTessellator {
         val arm = GRIP_ARM_PX / zoom
         val top = com.xnotes.canvas.ResizeMath.obbTopMid(box)
         val grip = com.xnotes.canvas.ResizeMath.obbRotateGrip(box, arm)
-        if (boxed) outline.polylineRibbon(listOf(top, grip), half, closed = false, tolerance = tolerance)
+        if (boxed && showGrip) outline.polylineRibbon(listOf(top, grip), half, closed = false, tolerance = tolerance)
 
         val marks = MeshBuilder()
         val handleHalf = HANDLE_PX / zoom / 2.0
@@ -72,7 +73,7 @@ object OverlayTessellator {
         for (c in centres) {
             marks.rect(c.x - handleHalf, c.y - handleHalf, handleHalf * 2, handleHalf * 2)
         }
-        if (boxed) marks.circle(grip.x, grip.y, GRIP_PX / zoom / 2.0, tolerance)
+        if (boxed && showGrip) marks.circle(grip.x, grip.y, GRIP_PX / zoom / 2.0, tolerance)
 
         val parts = ArrayList<MeshPart>(2)
         if (!outline.isEmpty) parts.add(MeshPart(outline.build(), accent, InkPass.OPAQUE))

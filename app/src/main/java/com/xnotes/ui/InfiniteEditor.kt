@@ -505,10 +505,11 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
      * Pin the selection where it is, then put the selection away, since a locked item cannot stay
      * selected. A held finger over it is the only way back, and it offers exactly that.
      */
-    override val canCropSelection: Boolean get() = false
-    override val isCropping: Boolean get() = false
-    override fun beginCrop() {}
-    override fun endCrop() {}
+    override val canCropSelection: Boolean get() = selection.canCrop()
+    override var isCropping: Boolean by mutableStateOf(false)
+        private set
+    override fun beginCrop() = interaction.beginCrop()
+    override fun endCrop() = interaction.endCrop()
 
     override fun lockSelection() {
         if (selection.isEmpty) return
@@ -1001,6 +1002,8 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
      */
     private fun publishOverlay() {
         hasSelection = !selection.isEmpty
+        isCropping = selection.cropping
+        scene.cropGhost = selection.cropImage
         refreshSelectionMenu()
         val accent = palette?.accent ?: InkPalette.DEFAULT
         val zoom = viewport.zoom
@@ -1017,6 +1020,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         selection.box?.let { box ->
             parts += OverlayTessellator.selection(box, zoom, accent, StrokeTessellator.DEFAULT_TOLERANCE, devicePxPerDp,
                 pointHandles = selection.pointShape?.let { selection.pointHandles() },
+                showGrip = !selection.cropping,
             )
             val b = OverlayTessellator.selectionBounds(box, zoom)
             bounds = bounds?.union(b) ?: b
