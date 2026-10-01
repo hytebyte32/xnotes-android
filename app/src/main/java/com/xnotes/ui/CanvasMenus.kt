@@ -87,6 +87,10 @@ interface SelectionMenuHost {
     val isCropping: Boolean
     fun beginCrop()
     fun endCrop()
+
+    /** True when the selection is one image that can be mirrored. */
+    val canFlipSelection: Boolean
+    fun flipSelection(horizontal: Boolean)
 }
 
 /**
@@ -129,6 +133,10 @@ fun SelectionMenu(host: SelectionMenuHost) {
         }
         ActionIcon(XnotesIcons.trash, stringResource(R.string.delete)) { host.deleteSelection() }
         if (host.canCropSelection) ActionIcon(XnotesIcons.crop, stringResource(R.string.crop)) { host.beginCrop() }
+        if (host.canFlipSelection) {
+            ActionIcon(XnotesIcons.flipHorizontal, stringResource(R.string.flip_horizontal)) { host.flipSelection(true) }
+            ActionIcon(XnotesIcons.flipVertical, stringResource(R.string.flip_vertical)) { host.flipSelection(false) }
+        }
         ActionIcon(XnotesIcons.cut, stringResource(R.string.cut)) { host.cutSelection() }
         ActionIcon(XnotesIcons.copy, stringResource(R.string.copy)) { host.copySelection(); host.dismissSelectionMenu() }
         ActionIcon(XnotesIcons.front, stringResource(R.string.bring_to_front)) { host.bringToFront(); host.dismissSelectionMenu() }

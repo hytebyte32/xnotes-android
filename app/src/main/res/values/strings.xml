@@ -824,6 +824,8 @@
     <string name="tab_new">New tab</string>
     <string name="tab_close">Close tab</string>
     <string name="err_tab_lost">That tab could not be reopened</string>
+    <string name="flip_horizontal">Flip horizontally</string>
+    <string name="flip_vertical">Flip vertically</string>
     <string name="crop">Crop</string>
     <string name="crop_done">Done cropping</string>
 </resources>

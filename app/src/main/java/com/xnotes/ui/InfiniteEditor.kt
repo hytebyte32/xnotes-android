@@ -505,7 +505,13 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
      * Pin the selection where it is, then put the selection away, since a locked item cannot stay
      * selected. A held finger over it is the only way back, and it offers exactly that.
      */
-    override val canCropSelection: Boolean get() = selection.canCrop()
+    override val canCropSelection: Boolean get() = selection.canCrop() && !selectionIsVector()
+    override val canFlipSelection: Boolean get() = selection.canFlip() && !selectionIsVector()
+    override fun flipSelection(horizontal: Boolean) = commitSelection(selection.flip(horizontal))
+
+    /** A drawing (SVG) is meshed from triangles that know nothing of a crop or a mirror, so it takes neither. */
+    private fun selectionIsVector(): Boolean =
+        (selection.items.singleOrNull() as? ImageItem)?.let { com.xnotes.platform.ImageDecoder.isVector(it.image.file.path) } == true
     override var isCropping: Boolean by mutableStateOf(false)
         private set
     override fun beginCrop() = interaction.beginCrop()

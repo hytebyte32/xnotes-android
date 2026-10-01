@@ -1167,6 +1167,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     override val canCropSelection: Boolean get() = controller.canCropSelection()
     override var isCropping by mutableStateOf(false)
         private set
+    override val canFlipSelection: Boolean get() = controller.canFlipSelection()
+    override fun flipSelection(horizontal: Boolean) = controller.flipSelection(horizontal)
     override fun beginCrop() = controller.beginCrop()
     override fun endCrop() = controller.endCrop()
     override fun unlockItem(item: com.xnotes.core.model.CanvasItem) = controller.unlockItem(item)

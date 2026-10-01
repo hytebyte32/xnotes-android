@@ -178,7 +178,15 @@ interface Renderer {
      * single primitive that takes a free angle. [crop], when given, is the visible part of the whole image as fractions (left, top, width, height) of its upright frame; [dest] is that visible part. Default is a no-op for backends that don't place
      * images.
      */
-    fun drawImage(image: ImageData, dest: Rect, orientation: Int = 0, angle: Double = 0.0, crop: Rect? = null) {}
+    fun drawImage(
+        image: ImageData,
+        dest: Rect,
+        orientation: Int = 0,
+        angle: Double = 0.0,
+        crop: Rect? = null,
+        flipH: Boolean = false,
+        flipV: Boolean = false,
+    ) {}
 
     fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags = TextFlags())
 

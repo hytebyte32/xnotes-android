@@ -1587,6 +1587,22 @@ class InteractionController(
         requestRender()
     }
 
+    /** A single unlocked image, not mid-crop, can be mirrored. */
+    fun canFlipSelection(): Boolean =
+        cropItem == null && (selection.singleOrNull()?.item as? ImageItem)?.locked == false
+
+    /** Mirror the selected image about its own box, as one undoable step. */
+    fun flipSelection(horizontal: Boolean) {
+        if (!canFlipSelection()) return
+        val img = selection[0].item as ImageItem
+        val before = img.snapshotGeometry()
+        img.flip(horizontal)
+        history.push(TransformItems(listOf(img), listOf(before), listOf(img.snapshotGeometry())))
+        state.document.dirty = true
+        onContentChanged()
+        requestRender()
+    }
+
     /** Leave crop mode, keeping the crop as one undoable step. */
     fun endCrop() {
         if (cropItem == null) return
@@ -2989,7 +3005,7 @@ class InteractionController(
             cropItem?.let { img ->
                 paintClippedToPage(r, cropPage) {
                     r.saveLayerAlpha(img.fullBounds(), 0.35)
-                    r.drawImage(img.image, img.fullRect(), img.orientation, img.angle, null)
+                    r.drawImage(img.image, img.fullRect(), img.orientation, img.angle, null, img.flipH, img.flipV)
                     r.restore()
                 }
             }

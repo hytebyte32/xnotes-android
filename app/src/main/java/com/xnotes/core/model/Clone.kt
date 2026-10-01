@@ -10,7 +10,7 @@ import com.xnotes.core.pal.TextMeasurer
  */
 fun CanvasItem.deepCopy(measurer: TextMeasurer): CanvasItem = when (this) {
     is Stroke -> Stroke(this)
-    is ImageItem -> ImageItem(image, rect, orientation, angle, crop)
+    is ImageItem -> ImageItem(image, rect, orientation, angle, crop, flipH, flipV)
     is TextItem -> TextItem(pos, width, height, text, rgba, pointSize, face, measurer)
     is LabelItem -> LabelItem(pos, text, height, rgba)
     is ShapeItem ->

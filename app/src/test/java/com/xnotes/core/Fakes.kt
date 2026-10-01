@@ -73,7 +73,7 @@ class FakeRenderer : Renderer {
         ops += "drawRaster"
         rasterDests += dest
     }
-    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double) { ops += "drawImage" }
+    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double, crop: Rect?, flipH: Boolean, flipV: Boolean) { ops += "drawImage" }
     override fun drawText(text: String, rect: Rect, font: FontSpec, color: Rgba, flags: TextFlags) { ops += "drawText" }
     override fun drawTextRun(text: String, x: Double, baseline: Double, font: FontSpec, color: Rgba) {
         ops += "drawTextRun:$text@$x,$baseline"

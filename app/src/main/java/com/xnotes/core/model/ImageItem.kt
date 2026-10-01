@@ -28,13 +28,16 @@ class ImageItem(
      * box; the whole image is [rect] scaled by 1 / these fractions.
      */
     var crop: Rect = FULL_CROP,
+    /** Mirrored left to right and/or top to bottom, after the quarter turn and before the free turn. */
+    var flipH: Boolean = false,
+    var flipV: Boolean = false,
 ) : CanvasItem, Resizable {
 
     override val kind = KIND
     override val resizable = true
     override var locked = false
 
-    override fun paint(r: Renderer) = r.drawImage(image, rect, orientation, angle, if (isCropped) crop else null)
+    override fun paint(r: Renderer) = r.drawImage(image, rect, orientation, angle, if (isCropped) crop else null, flipH, flipV)
 
     val isCropped: Boolean get() = crop != FULL_CROP
 
@@ -99,6 +102,20 @@ class ImageItem(
 
     override fun bounds(): Rect = if (angle == 0.0) rect else Rect.bounding(corners())
 
+    /**
+     * Mirror the picture about the visible box, which stays where it is. The crop is kept in the
+     * mirrored picture's own fractions, so the same part of the picture stays on show, mirrored.
+     */
+    fun flip(horizontal: Boolean) {
+        if (horizontal) {
+            flipH = !flipH
+            crop = Rect(1.0 - crop.x - crop.w, crop.y, crop.w, crop.h)
+        } else {
+            flipV = !flipV
+            crop = Rect(crop.x, 1.0 - crop.y - crop.h, crop.w, crop.h)
+        }
+    }
+
     /** The turned rect's four corners, in the item's own space. */
     fun corners(): List<Pt> {
         val cs = cos(angle)
@@ -142,13 +159,15 @@ class ImageItem(
         if (handle is RectHandle) rect = handle.rect
     }
 
-    override fun snapshotGeometry(): GeometrySnapshot = ImageSnapshot(rect, angle, crop)
+    override fun snapshotGeometry(): GeometrySnapshot = ImageSnapshot(rect, angle, crop, flipH, flipV)
 
     override fun restoreGeometry(snap: GeometrySnapshot) {
         if (snap is ImageSnapshot) {
             rect = snap.rect
             angle = snap.angle
             crop = snap.crop
+            flipH = snap.flipH
+            flipV = snap.flipV
         }
     }
 
@@ -172,4 +191,4 @@ class ImageItem(
 }
 
 /** Snapshot of an image's transformable geometry. */
-private data class ImageSnapshot(val rect: Rect, val angle: Double, val crop: Rect) : GeometrySnapshot
+private data class ImageSnapshot(val rect: Rect, val angle: Double, val crop: Rect, val flipH: Boolean, val flipV: Boolean) : GeometrySnapshot

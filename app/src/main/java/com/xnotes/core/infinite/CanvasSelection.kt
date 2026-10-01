@@ -189,6 +189,22 @@ class CanvasSelection(private val doc: InfiniteDocument) {
         refreshBox()
     }
 
+    /** One unlocked image, not mid-crop. */
+    fun canFlip(): Boolean {
+        val img = items.singleOrNull() as? ImageItem ?: return false
+        return !img.locked && !cropping
+    }
+
+    /** Mirror the selected image about its box; the undoable edit, or null when it cannot be done. */
+    fun flip(horizontal: Boolean): Command? {
+        if (!canFlip()) return null
+        val img = items.single() as ImageItem
+        val before = img.snapshotGeometry()
+        img.flip(horizontal)
+        doc.itemsChanged(items)
+        return OnCanvas(doc, TransformItems(listOf(img), listOf(before), listOf(img.snapshotGeometry())), listOf(img))
+    }
+
     /** Leave crop mode, returning the undoable edit when the crop actually changed. */
     fun endCrop(): Command? {
         val img = cropImage ?: return null

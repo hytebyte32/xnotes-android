@@ -695,7 +695,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene 
             corners[2 * i] = (dx / frame.widthPx * 2.0 - 1.0).toFloat()
             corners[2 * i + 1] = (1.0 - dy / frame.heightPx * 2.0).toFloat()
         }
-        shader.draw(corners, texture, image.orientation / 90, alpha, crop)
+        shader.draw(corners, texture, image.orientation / 90, alpha, crop, image.flipH, image.flipV)
         lastDrawCalls++
     }
 

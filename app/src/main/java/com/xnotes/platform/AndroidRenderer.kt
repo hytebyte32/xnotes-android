@@ -305,27 +305,41 @@ class AndroidRenderer(private val canvas: Canvas) : Renderer {
     // source) so a huge photo never fully decodes; the quarter turn and the free angle are applied
     // as one canvas rotation about the destination centre (they share it, so they simply add), the
     // rect already carrying the quarter-turned (w/h-swapped) box.
-    override fun drawImage(image: ImageData, dest: Rect, orientation: Int, angle: Double, crop: Rect?) {
+    override fun drawImage(
+        image: ImageData,
+        dest: Rect,
+        orientation: Int,
+        angle: Double,
+        crop: Rect?,
+        flipH: Boolean,
+        flipV: Boolean,
+    ) {
         if (dest.w <= 0.0 || dest.h <= 0.0) return
         // A crop shows part of a larger picture: size the decode for the whole of it, not the visible part.
         val devW = (dest.w * scaleX / (crop?.w ?: 1.0)).toInt()
         val devH = (dest.h * scaleY / (crop?.h ?: 1.0)).toInt()
         val o = ((orientation % 360) + 360) % 360
-        if (crop == null && o == 0 && angle == 0.0 && drawVectorSlice(image, dest, devW, devH)) return
+        if (crop == null && o == 0 && angle == 0.0 && !flipH && !flipV && drawVectorSlice(image, dest, devW, devH)) return
         val turned = o == 90 || o == 270
         val reqW = (if (turned) devH else devW).coerceIn(1, DECODE_CAP_PX)
         val reqH = (if (turned) devW else devH).coerceIn(1, DECODE_CAP_PX)
         val bmp = ImageDecoder.decodeForDisplay(image.file.path, reqW, reqH) ?: return
         val uw = (if (turned) dest.h else dest.w).toFloat()
         val uh = (if (turned) dest.w else dest.h).toFloat()
-        val degrees = o + Math.toDegrees(angle)
         canvas.save()
         canvas.translate(((dest.left + dest.right) / 2.0).toFloat(), ((dest.top + dest.bottom) / 2.0).toFloat())
-        if (degrees != 0.0) canvas.rotate(degrees.toFloat())
-        val src = crop?.let { cropSource(it, o, bmp.width, bmp.height) }
+        // The free turn first, then the mirror in the picture's own axes, then the quarter turn.
+        if (angle != 0.0) canvas.rotate(Math.toDegrees(angle).toFloat())
+        if (flipH || flipV) canvas.scale(if (flipH) -1f else 1f, if (flipV) -1f else 1f)
+        if (o != 0) canvas.rotate(o.toFloat())
+        // The crop is kept in the mirrored picture's fractions; the mirror above puts it back.
+        val src = crop?.let { cropSource(unmirror(it, flipH, flipV), o, bmp.width, bmp.height) }
         canvas.drawBitmap(bmp, src, RectF(-uw / 2f, -uh / 2f, uw / 2f, uh / 2f), bitmapPaint)
         canvas.restore()
     }
+
+    private fun unmirror(c: Rect, flipH: Boolean, flipV: Boolean): Rect =
+        Rect(if (flipH) 1.0 - c.x - c.w else c.x, if (flipV) 1.0 - c.y - c.h else c.y, c.w, c.h)
 
     /**
      * The part of the decoded bitmap a crop shows. [crop] is in the upright, turned frame; the bitmap
