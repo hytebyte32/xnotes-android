@@ -168,6 +168,9 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
     /** True while edits are queued that the render thread has not applied yet. */
     fun hasPendingEdits(): Boolean = pending.isNotEmpty()
 
+    /** How many edits are queued for the render thread. */
+    fun pendingEditCount(): Int = pending.size
+
     /** Items currently drawn, for the debug readout. */
     val itemCount: Int get() = records.size
 

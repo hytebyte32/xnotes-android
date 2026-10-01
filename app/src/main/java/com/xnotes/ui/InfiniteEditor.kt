@@ -429,11 +429,12 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     var lastLoadWaitMs = 0L
         private set
 
-    /** Ask for a frame and wait, briefly, until the render thread has applied what was queued. False if it never did. */
+    /** Ask for a frame and wait, briefly, until no more than about a chunk is left queued. False if it never got there. */
     private fun waitForRenderThread(): Boolean {
         view.publish()
         val deadline = System.nanoTime() + RENDER_WAIT_NS
-        while (scene.hasPendingEdits()) {
+        // One chunk may stay queued, so the next one is meshed while the render thread takes this one.
+        while (scene.pendingEditCount() > LOAD_CHUNK + LOAD_CHUNK / 2) {
             if (System.nanoTime() > deadline) return false
             Thread.sleep(2)
         }
