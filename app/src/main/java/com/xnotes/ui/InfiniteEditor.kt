@@ -406,14 +406,28 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         val items = ArrayList(document.items)
         var backPressure = view.isAttachedToWindow && view.width > 0
         var i = 0
+        var meshNs = 0L
+        var waitNs = 0L
         while (i < items.size) {
             val end = minOf(i + LOAD_CHUNK, items.size)
+            val t0 = System.nanoTime()
             scene.batch { for (k in i until end) pushItem(items[k]) }
+            val t1 = System.nanoTime()
+            meshNs += t1 - t0
             i = end
             if (backPressure && i < items.size) backPressure = waitForRenderThread()
+            waitNs += System.nanoTime() - t1
         }
+        lastLoadMeshMs = meshNs / 1_000_000
+        lastLoadWaitMs = waitNs / 1_000_000
         scene.setOrder(document.items)
     }
+
+    /** How the last scene rebuild split its time: queuing meshed chunks vs waiting for the render thread. */
+    var lastLoadMeshMs = 0L
+        private set
+    var lastLoadWaitMs = 0L
+        private set
 
     /** Ask for a frame and wait, briefly, until the render thread has applied what was queued. False if it never did. */
     private fun waitForRenderThread(): Boolean {

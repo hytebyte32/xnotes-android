@@ -177,13 +177,21 @@ class GeometryStore(private val committed: Boolean = false) {
         // A reservation that cannot be had is not a failure: the puts behind it grow as they need to.
         val vertexCap = vertexAllocator.reservedCapacity(vertices)
         if (vertexCap != null && vertexCap > vertexAllocator.capacity) {
-            resize(vertexMirror, vertexAllocator, vertexCap, VERTEX_STRIDE)?.let { vertexMirror = it }
+            resize(vertexMirror, vertexAllocator, geometric(vertexAllocator.capacity, vertexCap), VERTEX_STRIDE)?.let { vertexMirror = it }
         }
         val indexCap = indexAllocator.reservedCapacity(indices)
         if (indexCap != null && indexCap > indexAllocator.capacity) {
-            resize(indexMirror, indexAllocator, indexCap, INDEX_STRIDE)?.let { indexMirror = it }
+            resize(indexMirror, indexAllocator, geometric(indexAllocator.capacity, indexCap), INDEX_STRIDE)?.let { indexMirror = it }
         }
     }
+
+    /**
+     * A grown capacity that is at least [need] and at least half again the [current] one. A load that
+     * reserves chunk by chunk would otherwise resize on nearly every chunk, copying the whole buffer
+     * and re-uploading it to the GPU each time.
+     */
+    private fun geometric(current: Int, need: Int): Int =
+        maxOf(need.toLong(), current * 3L / 2).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
     // --- GL lifecycle ---
 

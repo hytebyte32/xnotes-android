@@ -1095,6 +1095,7 @@ class BenchActivity : ComponentActivity() {
             val h4 = settledMb()
             row.put("loaded_total_kb_per_stroke", round((h4 - h0) * 1024 / n))
             withContext(Dispatchers.Default) { for (it in doc!!.items) (it as? Stroke)?.releaseGeometry() }
+            row.put("load_mesh_ms", ed.lastLoadMeshMs).put("load_wait_ms", ed.lastLoadWaitMs)
             val h5 = settledMb()
             row.put("scene_kb_per_stroke", round((h5 - h1) * 1024 / n))
             row.put("geometry_still_cached_kb_per_stroke", round((h4 - h5) * 1024 / n))
