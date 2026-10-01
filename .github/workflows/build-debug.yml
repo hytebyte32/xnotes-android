@@ -2,7 +2,7 @@ name: Build debug APK
 
 on:
   push:
-    branches: [master]
+    branches: [master, unify-notes-canvas]
   workflow_dispatch:
 
 jobs:
@@ -45,6 +45,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: xnotes-debug-apk
+          name: xnotes-bench-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error

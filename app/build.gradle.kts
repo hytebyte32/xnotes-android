@@ -74,7 +74,7 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            applicationIdSuffix = ".bench"
             versionNameSuffix = "-debug"
         }
         release {
