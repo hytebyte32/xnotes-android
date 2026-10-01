@@ -447,7 +447,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     /** Switch for the bench: false meshes on the main thread, one item at a time, as before. */
-    var meshInParallel = true
+    var meshInParallel = false
 
     private val meshPool: java.util.concurrent.ThreadPoolExecutor by lazy {
         val workers = (Runtime.getRuntime().availableProcessors() / 2).coerceIn(2, 4)
