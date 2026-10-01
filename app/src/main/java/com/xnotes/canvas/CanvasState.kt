@@ -428,6 +428,9 @@ class CanvasState(
         val sy: Double,
         val z: Double,
         val gen: Int,
+        /** Buffer (surface px) the frame extends past the viewport on each side. */
+        val mx: Double = 0.0,
+        val my: Double = 0.0,
     )
 
     private var sharpFrame: SharpFrame? = null
@@ -1480,7 +1483,16 @@ class CanvasState(
      * Ready sharp layers (background then ink) plus the affine transform to blit them at: each is
      * drawn into `Rect(dx, dy, base.width * scale, base.height * scale)`.
      */
-    class SharpBlit(val base: RasterSurface, val ink: RasterSurface, val scale: Double, val dx: Double, val dy: Double)
+    class SharpBlit(
+        val base: RasterSurface,
+        val ink: RasterSurface,
+        val scale: Double,
+        val dx: Double,
+        val dy: Double,
+        /** The buffer past the viewport on each side, in surface px (multiply by [scale] for screen px). */
+        val padX: Double,
+        val padY: Double,
+    )
 
     /**
      * The sharp viewport layers to blit, or null when there isn't a usable one. It stays usable
@@ -1498,7 +1510,7 @@ class CanvasState(
         val o = origin() // live origin, incl. overscroll lift, so the sharp page rides the pull too
         val o0 = originFor(f.sx, f.sy, f.z)
         // Surface pixel p maps to screen scale*p + (o - scale*o0).
-        return SharpBlit(f.base, f.ink, scale, o.x - scale * o0.x, o.y - scale * o0.y)
+        return SharpBlit(f.base, f.ink, scale, o.x - scale * o0.x - scale * f.mx, o.y - scale * o0.y - scale * f.my, f.mx, f.my)
     }
 
     /** Drop the sharp viewport surface (e.g. once the zoom falls back below the cap). */
@@ -1524,7 +1536,12 @@ class CanvasState(
         val vh = viewportH
         val res = z * renderScale
         val o = originFor(sx, sy, z)
-        val visible = visibleFor(sx, sy, z)
+        // The frame reaches past the screen on every side, so panning slides sharp pixels into view
+        // rather than the soft cache showing at the edge until the view settles.
+        val mx = (vw * SHARP_BUFFER).toInt()
+        val my = (vh * SHARP_BUFFER).toInt()
+        val seen = visibleFor(sx, sy, z)
+        val visible = Rect(seen.left - mx / z, seen.top - my / z, seen.w + 2 * mx / z, seen.h + 2 * my / z)
         val bg = palette.bg
         // Snapshot the visible pages and their items on the UI thread.
         val drawable = drawablePageRange()
@@ -1546,13 +1563,14 @@ class CanvasState(
         pendingSharpEdits.clear()
         val withFlow = !flowLifted // snapshot; a session toggle bumps sharpGen and discards this
         runAsync {
-            val base = surfaceFactory.create(vw, vh, 1.0).also { it.fill(bg) }
-            val ink = surfaceFactory.create(vw, vh, 1.0).also { it.fill(TRANSPARENT) }
-            renderSharpFrame(base, ink, o, z, res, draws, withFlow)
+            val base = surfaceFactory.create(vw + 2 * mx, vh + 2 * my, 1.0).also { it.fill(bg) }
+            val ink = surfaceFactory.create(vw + 2 * mx, vh + 2 * my, 1.0).also { it.fill(TRANSPARENT) }
+            renderSharpFrame(base, ink, Pt(o.x + mx, o.y + my), z, res, draws, withFlow)
             postToMain {
                 pendingSharp = false
-                if (gen == sharpGen && sx == scrollX && sy == scrollY && z == zoom) {
-                    sharpFrame = SharpFrame(base, ink, sx, sy, z, gen)
+                if (gen == sharpGen && z == zoom) {
+                    // A pan since the render began is fine: the frame carries the view it was drawn for.
+                    sharpFrame = SharpFrame(base, ink, sx, sy, z, gen, mx.toDouble(), my.toDouble())
                     // Replay edits committed during the build; the item snapshot predates them.
                     for ((p, rect) in pendingSharpEdits) repairSharpInk(p, rect)
                     onCacheReady?.invoke()
@@ -1610,7 +1628,7 @@ class CanvasState(
         val o0 = originFor(f.sx, f.sy, f.z)
         val r = f.ink.renderer()
         r.save()
-        r.translate(o0.x, o0.y)
+        r.translate(o0.x + f.mx, o0.y + f.my)
         r.scale(f.z, f.z)
         r.clipRect(pr)
         r.translate(pr.left, pr.top)
@@ -1627,7 +1645,7 @@ class CanvasState(
         val o0 = originFor(f.sx, f.sy, f.z)
         val r = f.ink.renderer()
         r.save()
-        r.translate(o0.x, o0.y)
+        r.translate(o0.x + f.mx, o0.y + f.my)
         r.scale(f.z, f.z)
         r.clipRect(pr)
         r.translate(pr.left, pr.top)
@@ -1748,6 +1766,9 @@ class CanvasState(
 
         /** Padding (content px) around a replayed or repaired dirty rect, for AA edges. */
         const val SHARP_EDIT_PAD = 2.0
+
+        /** How far the sharp viewport reaches past the screen, as a fraction of the viewport on each side. */
+        const val SHARP_BUFFER = 0.25
 
         /** Gap (viewport px) left above the page top so nothing hides behind the toolbar. */
         const val TOP_GAP = 16.0

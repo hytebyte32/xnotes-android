@@ -507,8 +507,12 @@ class CanvasView @JvmOverloads constructor(
                 r.drawRaster(blit.ink, Rect(blit.dx, blit.dy, dw, dh))
                 mainHandler.removeCallbacks(sharpDebounce)
                 // Off the exact rendered view (panned or zoomed): re-render for where we settle.
-                val exact = blit.scale == 1.0 && blit.dx == 0.0 && blit.dy == 0.0
+                val exact = blit.scale == 1.0 && blit.dx == -blit.padX && blit.dy == -blit.padY
                 if (!exact) mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
+                // Do not wait for the view to stop: once the spare buffer on any side is nearly used up,
+                // start the next render now, so a long pan keeps meeting sharp pixels.
+                val spare = minOf(-blit.dx, blit.dx + dw - st.viewportW.toDouble(), -blit.dy, blit.dy + dh - st.viewportH.toDouble())
+                if (spare < SHARP_REFRESH_FRACTION * minOf(blit.padX, blit.padY) * blit.scale) st.requestSharpViewport()
             } else {
                 mainHandler.removeCallbacks(sharpDebounce)
                 mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
@@ -719,6 +723,9 @@ class CanvasView @JvmOverloads constructor(
 
         /** How long the view must be still before the sharp viewport is rendered (ms). */
         private const val SHARP_SETTLE_MS = 90L
+
+        /** Re-render the sharp viewport when less than this fraction of its buffer is left on a side. */
+        private const val SHARP_REFRESH_FRACTION = 0.4
 
         /** Idle repaint interval (ms) while the debug HUD is visible, so its FPS falls to 0. */
         private const val DEBUG_TICK_MS = 250L
