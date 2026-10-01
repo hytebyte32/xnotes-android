@@ -86,6 +86,7 @@ class BenchActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        installCrashCapture()
         @Suppress("DEPRECATION")
         refreshMs = 1000.0 / windowManager.defaultDisplay.refreshRate.toDouble().coerceAtLeast(30.0)
         val root = FrameLayout(this)
@@ -130,6 +131,25 @@ class BenchActivity : ComponentActivity() {
         root.addView(panel, FrameLayout.LayoutParams(-1, -1, Gravity.TOP))
         setContentView(root)
         line("xnotes renderer spike. Keep the screen on and the pen away while it runs.")
+        File(filesDir, "crash.txt").takeIf { it.exists() }?.let { f ->
+            line("=== LAST RUN CRASHED ===")
+            line(f.readText().take(3500))
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager).setPrimaryClip(ClipData.newPlainText("crash", f.readText()))
+            line("(crash text copied to clipboard)")
+            f.delete()
+        }
+    }
+
+    /** Writes an uncaught exception to a file the next launch shows, since there is no logcat on the tablet. */
+    private fun installCrashCapture() {
+        val previous = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            try {
+                File(filesDir, "crash.txt").writeText("thread ${t.name}\n" + e.stackTraceToString().take(6000) + "\nlast log lines:\n" + (0 until log.length()).toList().takeLast(8).joinToString("\n") { log.getString(it) })
+            } catch (_: Throwable) {
+            }
+            previous?.uncaughtException(t, e)
+        }
     }
 
     override fun onDestroy() {
