@@ -1678,7 +1678,26 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         refreshSelectionMenu()
         measure.viewChanged()
         // The minimap maps everything drawn, so its extent moves with the content, not the view.
-        view.contentBounds = document.contentBounds()
+        if (com.xnotes.core.infinite.Tuning.lodEnabled || com.xnotes.core.infinite.Tuning.lodLevel != 0) {
+            view.removeCallbacks(lodSettle)
+            view.postDelayed(lodSettle, LOD_SETTLE_MS)
+        }
+    }
+
+    private val lodSettle = Runnable { applyLod() }
+
+    /**
+     * Re-mesh at the coarsest [com.xnotes.core.infinite.Lod] level the current zoom allows, or back
+     * to exact geometry when the switch is off. Runs once the view stops moving, since every change
+     * of level re-tessellates the document. Returns true when it rebuilt.
+     */
+    fun applyLod(zoom: Double = viewport.zoom): Boolean {
+        val t = com.xnotes.core.infinite.Tuning
+        val level = if (t.lodEnabled) com.xnotes.core.infinite.Lod.levelFor(zoom) else 0
+        if (level == t.lodLevel) return false
+        t.lodLevel = level
+        rebuildScene()
+        return true
     }
 
     private fun refresh() {
@@ -1690,6 +1709,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     companion object {
+        private const val LOD_SETTLE_MS = 300L
         /** Zoom step for the keyboard, matching a comfortable notch of a pinch. */
         const val ZOOM_STEP = 1.25
 

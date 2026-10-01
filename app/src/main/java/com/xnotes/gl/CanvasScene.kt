@@ -35,7 +35,7 @@ enum class WetKind {
  * Edits arrive as messages, already tessellated on the thread that made them, so a frame never
  * races an edit and tessellation never blocks the render thread.
  */
-class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene {
+class CanvasScene(private val store: GeometryStore = GeometryStore(committed = true)) : GlScene {
 
     /** One run of triangles in one colour. An item is one or more, drawn in order. */
     private class Part(
@@ -351,6 +351,8 @@ class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene 
         deferred.clear()
         var runStart = -1
         var runCount = 0
+        val gapLimit = com.xnotes.core.infinite.Tuning.mergeGap
+        val starts = if (gapLimit > 0) visiblePartStarts() else null
         for (record in visible) {
             if (record.image != null) {
                 flushRun(runStart, runCount)
@@ -373,6 +375,8 @@ class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene 
                     InkPass.OPAQUE -> {
                         if (runStart >= 0 && part.slice.indexOffset == runStart + runCount) {
                             runCount += part.slice.indexCount
+                        } else if (runStart >= 0 && starts != null && canBridge(starts, runStart + runCount, part.slice.indexOffset, gapLimit)) {
+                            runCount = part.slice.indexOffset + part.slice.indexCount - runStart
                         } else {
                             flushRun(runStart, runCount)
                             runStart = part.slice.indexOffset
@@ -895,6 +899,32 @@ class CanvasScene(private val store: GeometryStore = GeometryStore()) : GlScene 
         val y = (glowTarget.bufferHeight - yTop - h).coerceAtLeast(0)
         if (w <= 0 || h <= 0) return
         GLES30.glScissor(x, y, w, h)
+    }
+
+    /** Sorted index offsets of every part slice that survived the cull, for gap bridging. */
+    private fun visiblePartStarts(): IntArray {
+        var n = 0
+        for (r in visible) n += r.parts.size
+        val out = IntArray(n)
+        var w = 0
+        for (r in visible) for (p in r.parts) out[w++] = p.slice.indexOffset
+        out.sort()
+        return out
+    }
+
+    /**
+     * True when the gap [from, to) between two opaque runs is at most [limit] indices and holds no
+     * visible part, so drawing across it paints only culled geometry and keeps z order intact.
+     */
+    private fun canBridge(starts: IntArray, from: Int, to: Int, limit: Int): Boolean {
+        if (to < from || to - from > limit) return false
+        var lo = 0
+        var hi = starts.size
+        while (lo < hi) {
+            val mid = (lo + hi) ushr 1
+            if (starts[mid] < from) lo = mid + 1 else hi = mid
+        }
+        return lo >= starts.size || starts[lo] >= to
     }
 
     private fun flushRun(start: Int, count: Int) {

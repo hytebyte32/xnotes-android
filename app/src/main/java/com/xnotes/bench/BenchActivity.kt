@@ -1,6 +1,12 @@
 package com.xnotes.bench
 
-import android.app.Activity
+import androidx.activity.ComponentActivity
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.platform.LocalDensity
+import com.hrm.latex.renderer.export.rememberLatexExporter
+import com.hrm.latex.renderer.measure.rememberLatexMeasurer
+import com.xnotes.core.infinite.Tuning
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ContentValues
@@ -62,7 +68,7 @@ import kotlin.random.Random
  * infinite-canvas (GL) stack, drives each with real synthesized touch events, and reports frame
  * times, memory and load times. Throwaway: nothing here ships in the real app.
  */
-class BenchActivity : Activity() {
+class BenchActivity : ComponentActivity() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var job: Job? = null
@@ -96,8 +102,9 @@ class BenchActivity : Activity() {
             setOnClickListener { onClick() }
             row.addView(this)
         }
-        button("Run quick (1k, 10k)") { start(quick = true) }
-        button("Run full (adds 100k)") { start(quick = false) }
+        button("Run grid") { startGrid() }
+        button("Run gaps") { start(quick = true) }
+        button("Run gaps + 100k") { start(quick = false) }
         button("Copy report") { copyReport() }
         button("Save JSON") { saveJson() }
         panel.addView(row)
@@ -108,6 +115,18 @@ class BenchActivity : Activity() {
             setTextIsSelectable(true)
         }
         panel.addView(ScrollView(this).apply { addView(reportView) }, LinearLayout.LayoutParams(-1, -1))
+        // The LaTeX engine is built in a composition, so a one-pixel host gives the bench the same one the app has.
+        root.addView(
+            ComposeView(this).apply {
+                setContent {
+                    val measurer = rememberLatexMeasurer()
+                    val exporter = rememberLatexExporter()
+                    val density = LocalDensity.current
+                    LaunchedEffect(measurer, exporter, density) { MathRendering.install(measurer, exporter, density) }
+                }
+            },
+            FrameLayout.LayoutParams(1, 1),
+        )
         root.addView(panel, FrameLayout.LayoutParams(-1, -1, Gravity.TOP))
         setContentView(root)
         line("xnotes renderer spike. Keep the screen on and the pen away while it runs.")
@@ -120,7 +139,10 @@ class BenchActivity : Activity() {
 
     // --- reporting ---
 
+    private val log = JSONArray()
+
     private fun line(s: String) {
+        log.put(s)
         text.append(s).append('\n')
         reportView.text = text
     }
@@ -138,6 +160,7 @@ class BenchActivity : Activity() {
             put(MediaStore.Downloads.MIME_TYPE, "application/json")
             put(MediaStore.Downloads.RELATIVE_PATH, "Download/")
         }
+        results.put("log", log)
         val uri = contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
         if (uri == null) { line("(could not create file)"); return }
         contentResolver.openOutputStream(uri)?.use { it.write(results.toString(2).toByteArray()) }
@@ -175,9 +198,11 @@ class BenchActivity : Activity() {
             try { pagedScenario(n, gestures) } catch (e: OutOfMemoryError) { line("paged $n: OUT OF MEMORY") }
             try { canvasScenario(n, gestures) } catch (e: OutOfMemoryError) { line("canvas $n: OUT OF MEMORY") }
         }
-        try { pdfRegions() } catch (t: Throwable) { line("pdf test failed: $t") }
-        try { textTextures() } catch (t: Throwable) { line("text test failed: $t") }
-        try { coldOpen() } catch (e: OutOfMemoryError) { line("cold open: OUT OF MEMORY") }
+        Tuning.reset()
+        try { padComparison() } catch (t: Throwable) { line("pad test failed: ${t.stackTraceToString().take(600)}") }
+        try { pdfRegions() } catch (t: Throwable) { line("pdf test failed: ${t.stackTraceToString().take(600)}") }
+        try { textTextures() } catch (t: Throwable) { line("text test failed: ${t.stackTraceToString().take(900)}") }
+        try { coldOpen() } catch (t: Throwable) { line("cold open failed: ${t.stackTraceToString().take(900)}") }
         saveJson()
     }
 
@@ -480,6 +505,9 @@ class BenchActivity : Activity() {
 
     private suspend fun textTextures() {
         line("--- text boxes and equations as textures ---")
+        var waited = 0
+        while (!MathRendering.ready() && waited++ < 50) delay(100)
+        line("math engine ready: ${MathRendering.ready()}")
         val measurer = AndroidTextMeasurer()
         val words = "ink canvas notes page render stroke pen zoom layer image text frame region scroll cache texture".split(' ')
         val rnd = Random(3)
@@ -508,12 +536,12 @@ class BenchActivity : Activity() {
             }
             val mathMs = ArrayList<Double>()
             withContext(Dispatchers.Default) {
-                repeat(30) {
+                repeat(30) { iter ->
                     val bmp = Bitmap.createBitmap((700 * scale).toInt(), (120 * scale).toInt(), Bitmap.Config.ARGB_8888)
                     val cv = Canvas(bmp)
                     cv.scale(scale, scale)
                     val t0 = System.nanoTime()
-                    MathRendering.draw(cv, "\\int_0^\\infty e^{-x^2}\\,dx=\\frac{\\sqrt{\\pi}}{2}", 10.0, 70.0, 24.0, Rgba(0, 0, 0, 255), true)
+                    MathRendering.draw(cv, "\\int_0^{$iter} e^{-x^2}\\,dx=\\frac{\\sqrt{\\pi}}{2}", 10.0, 70.0, 24.0, Rgba(0, 0, 0, 255), true)
                     mathMs.add((System.nanoTime() - t0) / 1e6)
                     bmp.recycle()
                 }
@@ -588,7 +616,7 @@ class BenchActivity : Activity() {
         results.put("cold_open", o)
         val imageCodec = AndroidImageCodec()
         val ed = paged ?: Editor(this).also { paged = it }
-        val pdoc = withContext(Dispatchers.Default) { BenchData.pagedDocument(40_000, perPage = 200) }
+        val pdoc = withContext(Dispatchers.Default) { BenchData.pagedDocument(20_000, perPage = 100) }
         val pf = File(cacheDir, "bench.xnote")
         val codec = DocumentCodec(imageCodec, AndroidTextMeasurer())
         val tw = SystemClock.elapsedRealtime()
@@ -607,10 +635,10 @@ class BenchActivity : Activity() {
         awaitFrame()
         val firstFrame = SystemClock.elapsedRealtime() - t1
         delay(2000)
-        val po = JSONObject().put("pages", back.pages.size).put("strokes", 40_000).put("file_mb", round(pf.length() / 1048576.0))
+        val po = JSONObject().put("pages", back.pages.size).put("strokes", 20_000).put("file_mb", round(pf.length() / 1048576.0))
             .put("write_ms", writeMs).put("read_ms", readMs).put("first_frame_ms", firstFrame).put("mem", memorySnapshot())
         o.put("paged", po)
-        line("paged 200 pages / 40k strokes: file ${po.optDouble("file_mb")} MB, write $writeMs ms, read $readMs ms, first frame $firstFrame ms, mem ${po.getJSONObject("mem")}")
+        line("paged 200 pages / 20k strokes: file ${po.optDouble("file_mb")} MB, write $writeMs ms, read $readMs ms, first frame $firstFrame ms, mem ${po.getJSONObject("mem")}")
         ed.state.document = Document.blank()
         ed.state.invalidateAllCaches()
         ed.state.relayout()
@@ -618,7 +646,7 @@ class BenchActivity : Activity() {
         System.gc()
         delay(500)
 
-        val cdoc = withContext(Dispatchers.Default) { BenchData.canvasDocument(100_000) }
+        val cdoc = withContext(Dispatchers.Default) { BenchData.canvasDocument(30_000) }
         val cf = File(cacheDir, "bench.xcanvas")
         val ccodec = CanvasCodec(imageCodec)
         val cw = SystemClock.elapsedRealtime()
@@ -636,13 +664,264 @@ class BenchActivity : Activity() {
         val cFirst = SystemClock.elapsedRealtime() - c1
         delay(2000)
         val st = ce.view.stats
-        val co = JSONObject().put("strokes", 100_000).put("file_mb", round(cf.length() / 1048576.0))
+        val co = JSONObject().put("strokes", 30_000).put("file_mb", round(cf.length() / 1048576.0))
             .put("write_ms", cwMs).put("read_ms", crMs).put("load_and_first_frame_ms", cFirst).put("mem", memorySnapshot())
             .put("gpu_geometry_mb", st.geometryBytes / (1024 * 1024))
         o.put("canvas", co)
-        line("canvas 100k strokes: file ${co.optDouble("file_mb")} MB, write $cwMs ms, read $crMs ms, load+first frame $cFirst ms, " +
+        line("canvas 30k strokes: file ${co.optDouble("file_mb")} MB, write $cwMs ms, read $crMs ms, load+first frame $cFirst ms, " +
             "gpu geometry ${co.optLong("gpu_geometry_mb")} MB, mem ${co.getJSONObject("mem")}")
         ce.replaceDocument(InfiniteDocument())
         cf.delete()
+    }
+
+    // --- config grid ---
+
+    private class Cfg(val name: String, val apply: () -> Unit)
+
+    private fun configs(): List<Cfg> = listOf(
+        Cfg("baseline") {},
+        Cfg("shared-rails") { Tuning.sharedRails = true },
+        Cfg("coarse-caps") { Tuning.capTolerance = 0.5 / 8.0 },
+        Cfg("simplify-0.25") { Tuning.simplifyTolerance = 0.25 },
+        Cfg("merge-gap") { Tuning.mergeGap = 30_000 },
+        Cfg("static-buffers") { Tuning.staticBuffers = true },
+        Cfg("lod") { Tuning.lodEnabled = true },
+        Cfg("all") {
+            Tuning.sharedRails = true
+            Tuning.capTolerance = 0.5 / 8.0
+            Tuning.simplifyTolerance = 0.25
+            Tuning.mergeGap = 30_000
+            Tuning.staticBuffers = true
+            Tuning.lodEnabled = true
+        },
+    )
+
+    private fun startGrid() {
+        if (job?.isActive == true) return
+        text.setLength(0)
+        reportView.text = ""
+        job = scope.launch {
+            panel.visibility = View.INVISIBLE
+            try {
+                gridSuite()
+            } catch (t: Throwable) {
+                line("FAILED: ${t.stackTraceToString().take(900)}")
+            }
+            Tuning.reset()
+            panel.visibility = View.VISIBLE
+            line("done")
+        }
+    }
+
+    private suspend fun gridSuite() {
+        results.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+        results.put("sdk", Build.VERSION.SDK_INT)
+        results.put("refresh_ms", round(refreshMs))
+        line("grid: ${Build.MODEL}  refresh ${round(1000.0 / refreshMs)} Hz")
+        val grid = JSONArray()
+        results.put("grid", grid)
+        // GL: each switch alone, then all together, at three sizes. 100k only for baseline and all.
+        for (n in listOf(1_000, 10_000, 30_000)) {
+            for (cfg in configs()) {
+                try {
+                    grid.put(glCell(cfg, n))
+                } catch (e: OutOfMemoryError) {
+                    line("gl ${cfg.name} $n: OUT OF MEMORY")
+                    grid.put(JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", n).put("error", "OutOfMemory"))
+                    canvas?.replaceDocument(InfiniteDocument())
+                    System.gc()
+                    delay(800)
+                } catch (t: Throwable) {
+                    line("gl ${cfg.name} $n failed: ${t.stackTraceToString().take(600)}")
+                    grid.put(JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", n).put("error", t.toString()))
+                }
+            }
+        }
+        for (cfg in configs().filter { it.name == "baseline" || it.name == "all" }) {
+            try {
+                grid.put(glCell(cfg, 100_000, quick = true))
+            } catch (e: OutOfMemoryError) {
+                line("gl ${cfg.name} 100000: OUT OF MEMORY")
+                grid.put(JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", 100_000).put("error", "OutOfMemory"))
+                canvas?.replaceDocument(InfiniteDocument())
+                System.gc()
+                delay(800)
+            } catch (t: Throwable) {
+                line("gl ${cfg.name} 100000 failed: ${t.stackTraceToString().take(600)}")
+            }
+        }
+        Tuning.reset()
+        // Skia: the page-bitmap cap is the lever for sharpness at fit-width.
+        for (n in listOf(1_000, 10_000)) {
+            for (cap in listOf(2048.0, 4096.0, 8192.0)) {
+                try {
+                    grid.put(pagedCell(n, cap))
+                } catch (t: Throwable) {
+                    line("paged cap ${cap.toInt()} $n failed: ${t.stackTraceToString().take(600)}")
+                    grid.put(JSONObject().put("renderer", "paged").put("cap_px", cap).put("strokes", n).put("error", t.toString()))
+                }
+            }
+        }
+        saveJson()
+    }
+
+    /** One GL cell: load, then three gestures, then wet ink, all under [cfg]. */
+    private suspend fun glCell(cfg: Cfg, n: Int, quick: Boolean = false): JSONObject {
+        Tuning.reset()
+        cfg.apply()
+        val ed = canvas ?: InfiniteEditor(this).also { canvas = it }
+        val cell = JSONObject().put("renderer", "gl").put("config", cfg.name).put("strokes", n)
+        val doc = withContext(Dispatchers.Default) { BenchData.canvasDocument(n) }
+        mount(ed.surfaces)
+        val vp = ed.viewport
+        val fit = vp.widthPx / BenchData.page.first
+        vp.zoom = fit
+        vp.scrollX = 0.0
+        vp.scrollY = 0.0
+        val tLoad = SystemClock.elapsedRealtime()
+        ed.replaceDocument(doc)
+        awaitFrame()
+        awaitFrame()
+        cell.put("load_ms", SystemClock.elapsedRealtime() - tLoad)
+        delay(2000)
+        val s0 = ed.view.stats
+        cell.put("vertices", s0.vertices).put("indices", s0.indices)
+        cell.put("vertices_per_stroke", round(s0.vertices.toDouble() / n))
+        cell.put("live_bytes_per_stroke", round(s0.liveGeometryBytes.toDouble() / n))
+        cell.put("geometry_mb", s0.geometryBytes / (1024 * 1024))
+        cell.put("mem", memorySnapshot())
+        ed.armTool(Tool.PEN)
+        val gestures = JSONObject()
+        cell.put("gestures", gestures)
+        val plan = if (quick) listOf(Triple("pan_fit", 1.0, "pan")) else listOf(
+            Triple("pan_fit", 1.0, "pan"),
+            Triple("pan_3x", 3.0, "pan"),
+            Triple("pan_overview", 0.15, "pan"),
+            Triple("pinch", 1.0, "pinch"),
+        )
+        for ((label, mul, kind) in plan) {
+            vp.zoom = fit
+            vp.scrollX = 0.0
+            vp.scrollY = 0.0
+            vp.clampToLimits()
+            if (mul != 1.0) vp.zoomAround(vp.widthPx / 2.0, vp.heightPx / 2.0, fit * mul)
+            ed.view.publish()
+            var relodMs = 0L
+            val t1 = SystemClock.elapsedRealtime()
+            if (ed.applyLod()) { awaitFrame(); relodMs = SystemClock.elapsedRealtime() - t1 }
+            delay(1200)
+            val samples = ArrayList<GlStats>()
+            var tick = 0
+            val r = gesture(kind, ed.view, 4.0, { Triple(vp.zoom, vp.scrollX, vp.scrollY) }) {
+                if (++tick % 20 == 0) samples.add(ed.view.stats)
+            }
+            if (samples.isNotEmpty()) {
+                r.put("gl_fps_mean", round(samples.map { it.fps }.average()))
+                r.put("gl_work_ms_mean", round(samples.map { it.frameMs }.average()))
+                r.put("gl_draw_calls", samples.last().drawCalls)
+                r.put("gl_vertices_in_scene", samples.last().vertices)
+            }
+            r.put("lod_level", Tuning.lodLevel).put("relod_ms", relodMs)
+            gestures.put(label, r)
+            line("gl ${cfg.name} $n $label  p95 ${r.optDouble("p95_ms")} >1.5x ${r.optDouble("over_1_5_refresh_pct")}%  " +
+                "work ${r.optDouble("gl_work_ms_mean")} ms  draws ${r.optInt("gl_draw_calls")}  lod ${Tuning.lodLevel}")
+            delay(600)
+        }
+        if (!quick) {
+            vp.zoom = fit
+            vp.scrollX = 0.0
+            vp.scrollY = 0.0
+            ed.view.publish()
+            ed.applyLod()
+            delay(1200)
+            cell.put("wet_ink", wetInk("gl", n, ed.view, { ed.document.items.size }, ed))
+        }
+        glLine("gl ${cfg.name} $n", ed.view.stats)
+        ed.replaceDocument(InfiniteDocument())
+        Tuning.lodLevel = 0
+        System.gc()
+        delay(700)
+        return cell
+    }
+
+    /** One Skia cell at a bitmap cap: fit-width pan, pinch, and the share of frames that were blurry. */
+    private suspend fun pagedCell(n: Int, cap: Double): JSONObject {
+        val ed = paged ?: Editor(this).also { paged = it }
+        val cell = JSONObject().put("renderer", "paged").put("cap_px", cap).put("strokes", n)
+        val doc = withContext(Dispatchers.Default) { BenchData.pagedDocument(n) }
+        mount(ed.surfaces)
+        val st = ed.state
+        st.maxCachePx = cap
+        val tLoad = SystemClock.elapsedRealtime()
+        st.document = doc
+        st.invalidateAllCaches()
+        st.relayout()
+        st.fitWidth()
+        awaitFrame()
+        cell.put("load_ms", SystemClock.elapsedRealtime() - tLoad)
+        delay(2500)
+        cell.put("mem", memorySnapshot())
+        ed.selectTool(Tool.PEN)
+        val gestures = JSONObject()
+        cell.put("gestures", gestures)
+        for ((label, mul, kind) in listOf(Triple("pan_fit", 1.0, "pan"), Triple("pan_3x", 3.0, "pan"), Triple("pinch", 1.0, "pinch"))) {
+            st.scrollY = 0.0
+            st.clampScroll()
+            st.fitWidth()
+            if (mul != 1.0) st.setZoomAnchored(st.clearCenter(), st.zoom * mul)
+            delay(1500)
+            var blurry = 0
+            var frames = 0
+            val r = gesture(kind, ed.view, 4.0, { Triple(st.zoom, st.scrollX, st.scrollY) }) {
+                frames++
+                if (st.isPastResolutionCap() && st.sharpViewportBlit() == null) blurry++
+            }
+            r.put("blurry_frame_pct", if (frames == 0) 0.0 else round(100.0 * blurry / frames))
+            gestures.put(label, r)
+            line("paged cap ${cap.toInt()} $n $label  p95 ${r.optDouble("p95_ms")} >1.5x ${r.optDouble("over_1_5_refresh_pct")}%  blurry ${r.optDouble("blurry_frame_pct")}%")
+            delay(600)
+        }
+        st.scrollY = 0.0
+        st.fitWidth()
+        delay(1200)
+        cell.put("wet_ink", wetInk("paged", n, ed.view, { st.document.pages.sumOf { it.items.size } }, null))
+        st.maxCachePx = 2048.0
+        st.document = Document.blank()
+        st.invalidateAllCaches()
+        st.relayout()
+        System.gc()
+        delay(700)
+        return cell
+    }
+
+    /** Wet ink on the GL canvas with the front-buffer pad on and off. */
+    private suspend fun padComparison() {
+        line("--- GL wet ink: front-buffer pad on vs off (10k strokes) ---")
+        Tuning.reset()
+        val ed = canvas ?: InfiniteEditor(this).also { canvas = it }
+        val doc = withContext(Dispatchers.Default) { BenchData.canvasDocument(10_000) }
+        mount(ed.surfaces)
+        val vp = ed.viewport
+        vp.zoom = vp.widthPx / BenchData.page.first
+        vp.scrollX = 0.0
+        vp.scrollY = 0.0
+        ed.replaceDocument(doc)
+        delay(2000)
+        ed.armTool(Tool.PEN)
+        val arr = JSONArray()
+        results.put("pad_comparison", arr)
+        val original = ed.pad.frontBuffering
+        for (on in listOf(true, false)) {
+            ed.pad.frontBuffering = on
+            delay(500)
+            val o = wetInk("gl", 10_000, ed.view, { ed.document.items.size }, ed)
+            o.put("pad", if (on) "on" else "off")
+            arr.put(o)
+            line("pad ${if (on) "on" else "off"} done")
+        }
+        ed.pad.frontBuffering = original
+        ed.replaceDocument(InfiniteDocument())
+        System.gc()
+        delay(500)
     }
 }

@@ -38,7 +38,7 @@ class BufferSlice(
  * of the whole document. Nothing here is the source of truth: all of it is derived from the model
  * and can be thrown away and rebuilt.
  */
-class GeometryStore {
+class GeometryStore(private val committed: Boolean = false) {
 
     /** Mirrors mapped from shared memory, which can be handed back the moment they are replaced. */
     private val mapped: MutableSet<ByteBuffer> = Collections.newSetFromMap(IdentityHashMap())
@@ -216,9 +216,9 @@ class GeometryStore {
         if (fullUpload) {
             // Upload only the part in use: reading a shared mirror's untouched pages would commit them.
             val vertexBytes = vertexAllocator.capacity * VERTEX_STRIDE
-            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexBytes, null, GLES30.GL_DYNAMIC_DRAW)
+            GLES30.glBufferData(GLES30.GL_ARRAY_BUFFER, vertexBytes, null, usageHint())
             val indexBytes = indexAllocator.capacity * INDEX_STRIDE
-            GLES30.glBufferData(GLES30.GL_ELEMENT_ARRAY_BUFFER, indexBytes, null, GLES30.GL_DYNAMIC_DRAW)
+            GLES30.glBufferData(GLES30.GL_ELEMENT_ARRAY_BUFFER, indexBytes, null, usageHint())
             fullUpload = false
             clearDirty()
             markVertexDirty(0, vertexAllocator.end)
@@ -243,6 +243,9 @@ class GeometryStore {
         clearDirty()
         return true
     }
+
+    private fun usageHint(): Int =
+        if (committed && com.xnotes.core.infinite.Tuning.staticBuffers) GLES30.GL_STATIC_DRAW else GLES30.GL_DYNAMIC_DRAW
 
     /** Point the ink program's attributes at the bound vertex buffer. */
     fun bindAttributes(program: InkShader) {

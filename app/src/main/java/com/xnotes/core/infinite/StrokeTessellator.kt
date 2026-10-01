@@ -118,34 +118,135 @@ object StrokeTessellator {
         if (widthScale != 1.0) return scaledRibbon(g, from, count, tolerance, widthScale)
         if (!g.hasRails) return b.build() // geometry without rails: nothing to draw
 
+        // Optional simplification: drop samples the line does not need. Endpoints always stay.
+        val simplify = Tuning.effectiveSimplify()
+        val keep = if (simplify > 0.0 && count > 2) keptPoints(g, from, end, simplify) else null
+        val n = keep?.size ?: count
+        fun pt(k: Int): Int = if (keep != null) keep[k] else from + k
+        val capTol = if (Tuning.capTolerance > 0.0) maxOf(tolerance, Tuning.capTolerance) else tolerance
+
         // Body: one quad per segment, both of its vertices taken straight off the rails, so
         // consecutive quads share an entire edge and the ribbon never gaps along its length.
-        for (i in from until end - 1) {
+        // With shared rails each sample's two rail vertices are emitted once and indexed by both quads.
+        val shared = Tuning.sharedRails
+        val lIdx = if (shared) IntArray(n) { -1 } else null
+        val rIdx = if (shared) IntArray(n) { -1 } else null
+        for (k in 0 until n - 1) {
+            val i = pt(k)
+            val j = pt(k + 1)
             val h0 = g.hw(i)
-            val h1 = g.hw(i + 1)
+            val h1 = g.hw(j)
             if (h0 <= MIN_HALF_WIDTH && h1 <= MIN_HALF_WIDTH) continue
             // Each rail vertex remembers how far it sits from the centreline, so a stroke thinner
             // than a pixel can be widened back to one and faded instead of breaking up.
-            val l0 = b.vertex(g.leftX(i), g.leftY(i), g.leftX(i) - g.cx(i), g.leftY(i) - g.cy(i))
-            val r0 = b.vertex(g.rightX(i), g.rightY(i), g.rightX(i) - g.cx(i), g.rightY(i) - g.cy(i))
-            val l1 = b.vertex(g.leftX(i + 1), g.leftY(i + 1), g.leftX(i + 1) - g.cx(i + 1), g.leftY(i + 1) - g.cy(i + 1))
-            val r1 = b.vertex(g.rightX(i + 1), g.rightY(i + 1), g.rightX(i + 1) - g.cx(i + 1), g.rightY(i + 1) - g.cy(i + 1))
+            val l0: Int
+            val r0: Int
+            val l1: Int
+            val r1: Int
+            if (shared) {
+                if (lIdx!![k] < 0) {
+                    lIdx[k] = b.vertex(g.leftX(i), g.leftY(i), g.leftX(i) - g.cx(i), g.leftY(i) - g.cy(i))
+                    rIdx!![k] = b.vertex(g.rightX(i), g.rightY(i), g.rightX(i) - g.cx(i), g.rightY(i) - g.cy(i))
+                }
+                if (lIdx[k + 1] < 0) {
+                    lIdx[k + 1] = b.vertex(g.leftX(j), g.leftY(j), g.leftX(j) - g.cx(j), g.leftY(j) - g.cy(j))
+                    rIdx!![k + 1] = b.vertex(g.rightX(j), g.rightY(j), g.rightX(j) - g.cx(j), g.rightY(j) - g.cy(j))
+                }
+                l0 = lIdx[k]; r0 = rIdx!![k]; l1 = lIdx[k + 1]; r1 = rIdx[k + 1]
+            } else {
+                l0 = b.vertex(g.leftX(i), g.leftY(i), g.leftX(i) - g.cx(i), g.leftY(i) - g.cy(i))
+                r0 = b.vertex(g.rightX(i), g.rightY(i), g.rightX(i) - g.cx(i), g.rightY(i) - g.cy(i))
+                l1 = b.vertex(g.leftX(j), g.leftY(j), g.leftX(j) - g.cx(j), g.leftY(j) - g.cy(j))
+                r1 = b.vertex(g.rightX(j), g.rightY(j), g.rightX(j) - g.cx(j), g.rightY(j) - g.cy(j))
+            }
             b.triangle(l0, r0, r1)
             b.triangle(l0, r1, l1)
         }
 
         // Round ends. A whole disc rather than a half one: it costs two extra fans per stroke and
         // removes every orientation question, and it is exactly the disc the paged renderer sweeps.
-        if (g.hw(from) > MIN_HALF_WIDTH) b.circle(g.cx(from), g.cy(from), g.hw(from), tolerance)
-        if (g.hw(end - 1) > MIN_HALF_WIDTH) b.circle(g.cx(end - 1), g.cy(end - 1), g.hw(end - 1), tolerance)
+        if (g.hw(from) > MIN_HALF_WIDTH) b.circle(g.cx(from), g.cy(from), g.hw(from), capTol)
+        if (g.hw(end - 1) > MIN_HALF_WIDTH) b.circle(g.cx(end - 1), g.cy(end - 1), g.hw(end - 1), capTol)
 
         // Discs at the hard turns only.
-        for (i in from + 1 until end - 1) {
+        for (k in 1 until n - 1) {
+            val i = pt(k)
             val h = g.hw(i)
             if (h <= MIN_HALF_WIDTH) continue
-            if (turnAngle(g, i) > JOIN_DISC_ANGLE) b.circle(g.cx(i), g.cy(i), h, tolerance)
+            if (turnBetween(g, pt(k - 1), i, pt(k + 1)) > JOIN_DISC_ANGLE) b.circle(g.cx(i), g.cy(i), h, capTol)
         }
         return b.build()
+    }
+
+    /**
+     * The samples of [from, end) worth keeping at [tol] content pixels: Douglas-Peucker on the
+     * centreline, with a sample also kept when its half-width differs from the interpolated one by
+     * more than [tol], so a pressure swell survives. Endpoints are always kept.
+     */
+    internal fun keptPoints(g: RibbonPoints, from: Int, end: Int, tol: Double): IntArray {
+        val last = end - 1
+        val keepFlag = BooleanArray(end - from)
+        keepFlag[0] = true
+        keepFlag[last - from] = true
+        val stack = IntArray(2 * (end - from) + 2)
+        var sp = 0
+        stack[sp++] = from
+        stack[sp++] = last
+        while (sp > 0) {
+            val hi = stack[--sp]
+            val lo = stack[--sp]
+            if (hi - lo < 2) continue
+            val ax = g.cx(lo)
+            val ay = g.cy(lo)
+            val bx = g.cx(hi)
+            val by = g.cy(hi)
+            val dx = bx - ax
+            val dy = by - ay
+            val len2 = dx * dx + dy * dy
+            val hLo = g.hw(lo).toDouble()
+            val hHi = g.hw(hi).toDouble()
+            var worst = -1.0
+            var at = -1
+            for (m in lo + 1 until hi) {
+                val px = g.cx(m) - ax
+                val py = g.cy(m) - ay
+                val t = if (len2 > 0.0) ((px * dx + py * dy) / len2).coerceIn(0.0, 1.0) else 0.0
+                val ex = px - t * dx
+                val ey = py - t * dy
+                val dist = hypot(ex, ey)
+                val wErr = kotlin.math.abs(g.hw(m) - (hLo + (hHi - hLo) * t))
+                val err = maxOf(dist, wErr)
+                if (err > worst) {
+                    worst = err
+                    at = m
+                }
+            }
+            if (worst > tol && at >= 0) {
+                keepFlag[at - from] = true
+                stack[sp++] = lo; stack[sp++] = at
+                stack[sp++] = at; stack[sp++] = hi
+            }
+        }
+        var count = 0
+        for (f in keepFlag) if (f) count++
+        val out = IntArray(count)
+        var w = 0
+        for (m in keepFlag.indices) if (keepFlag[m]) out[w++] = from + m
+        return out
+    }
+
+    /** Angle between the segments a-b and b-c, in radians. */
+    private fun turnBetween(g: RibbonPoints, a: Int, b: Int, c: Int): Double {
+        val ax = g.cx(b) - g.cx(a)
+        val ay = g.cy(b) - g.cy(a)
+        val bx = g.cx(c) - g.cx(b)
+        val by = g.cy(c) - g.cy(b)
+        val la = hypot(ax, ay)
+        val lb = hypot(bx, by)
+        if (la < 1e-12 || lb < 1e-12) return 0.0
+        val cross = (ax * by - ay * bx) / (la * lb)
+        val dot = (ax * bx + ay * by) / (la * lb)
+        return kotlin.math.abs(atan2(cross, dot))
     }
 
     /**
