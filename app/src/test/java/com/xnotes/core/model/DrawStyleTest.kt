@@ -62,9 +62,9 @@ class DrawStyleTest {
         val command = RestyleItems(entries)
         command.redo()
         assertEquals(DrawStyle(Rgba(0, 200, 0), 12.0), DrawStyle.of(a))
-        assertEquals(DrawStyle(Rgba(0, 200, 0), 12.0), DrawStyle.of(b))
+        assertEquals(DrawStyle(Rgba(0, 200, 0), 12.0, false), DrawStyle.of(b))
         command.undo()
         assertEquals(DrawStyle(red, 3.0), DrawStyle.of(a))
-        assertEquals(DrawStyle(blue, 7.0), DrawStyle.of(b))
+        assertEquals(DrawStyle(blue, 7.0, false), DrawStyle.of(b))
     }
 }

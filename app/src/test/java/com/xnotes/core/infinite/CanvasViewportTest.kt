@@ -12,6 +12,10 @@ class CanvasViewportTest {
         CanvasViewport().apply {
             widthPx = w
             heightPx = h
+            // The canvas is walled in at its top-left like a page; these tests are about the view
+            // maths, so push the wall out of the way. The wall has its own tests below.
+            originX = -1e9
+            originY = -1e9
         }
 
     @Test fun identityViewMapsContentToItself() {
@@ -201,5 +205,15 @@ class CanvasViewportTest {
         val back = v.viewportToContent(v.contentToViewport(Pt(-1e7, 1e7)))
         assertEquals(-1e7, back.x, 1e-3)
         assertEquals(1e7, back.y, 1e-3)
+    }
+
+    @Test fun theViewCannotScrollPastTheTopLeft() {
+        val v = CanvasViewport().apply { widthPx = 1000; heightPx = 800 }
+        v.panByViewport(500.0, 500.0)
+        assertEquals(0.0, v.scrollX, 1e-9)
+        assertEquals(0.0, v.scrollY, 1e-9)
+        v.centerOn(-250.0, -250.0)
+        assertEquals(0.0, v.scrollX, 1e-9)
+        assertEquals(0.0, v.scrollY, 1e-9)
     }
 }

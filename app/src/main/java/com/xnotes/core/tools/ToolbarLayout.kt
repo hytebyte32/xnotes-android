@@ -195,7 +195,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.PROTRACTOR, ToolbarItem.TEXT, ToolbarItem.TEXT_BOX),
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
-            listOf(ToolbarItem.UNDO, ToolbarItem.REDO),
+            listOf(ToolbarItem.UNDO, ToolbarItem.REDO, ToolbarItem.ADD_PAGE, ToolbarItem.EXPORT),
             listOf(ToolbarItem.PAGE_NAV, ToolbarItem.STYLES, ToolbarItem.MARGINS, ToolbarItem.VIEW),
             listOf(ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK),
             listOf(ToolbarItem.FULLSCREEN),
@@ -212,7 +212,7 @@ data class ToolbarLayout(val sections: List<ToolbarSection>) {
             listOf(ToolbarItem.WAND, ToolbarItem.SHAPE, ToolbarItem.RULER, ToolbarItem.PROTRACTOR),
             listOf(ToolbarItem.IMAGE),
             listOf(ToolbarItem.COLORS),
-            listOf(ToolbarItem.UNDO, ToolbarItem.REDO),
+            listOf(ToolbarItem.UNDO, ToolbarItem.REDO, ToolbarItem.EXPORT),
             listOf(ToolbarItem.STYLES, ToolbarItem.WAYPOINTS, ToolbarItem.MINIMAP),
             listOf(ToolbarItem.ZOOM, ToolbarItem.FIT, ToolbarItem.ZOOM_LOCK),
         )
