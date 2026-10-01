@@ -396,6 +396,10 @@ class DocumentCodec(
             j.name("dash_length").value(s.dashLength)
             j.name("dash_gap").value(s.dashGap)
         }
+        if (s.isHighlighter) {
+            j.name("hl_alpha").value(s.highlighterAlpha)
+            if (s.highlighterInverse) j.name("hl_inverse").value(true)
+        }
         if (s.locked) j.name("locked").value(true)
         j.endObject()
     }
@@ -787,6 +791,8 @@ class DocumentCodec(
         var dashed = false
         var dashLength = 10.0
         var dashGap = 8.0
+        var hlAlpha = 0.0
+        var hlInverse = false
     }
 
     /** Stroke config fields as written; null = absent, so defaults resolve exactly as before. */
@@ -846,6 +852,8 @@ class DocumentCodec(
                 "dashed" -> s.dashed = boolOr(p, false)
                 "dash_length" -> s.dashLength = doubleOr(p, 10.0)
                 "dash_gap" -> s.dashGap = doubleOr(p, 8.0)
+                "hl_alpha" -> s.hlAlpha = doubleOr(p, 0.0)
+                "hl_inverse" -> s.hlInverse = boolOr(p, false)
                 "locked" -> s.locked = boolOr(p, false)
                 else -> p.skipValue()
             }
@@ -917,7 +925,7 @@ class DocumentCodec(
         s.points?.let { verts ->
             return ShapeItem.poly(
                 kind, verts, strokeRgba, s.strokeWidth, s.fillRgba, s.neon, s.neonStrength,
-                s.dashed, s.dashLength, s.dashGap,
+                s.dashed, s.dashLength, s.dashGap, s.hlAlpha, s.hlInverse,
             )
         }
         return ShapeItem(
@@ -932,6 +940,8 @@ class DocumentCodec(
             dashed = s.dashed,
             dashLength = s.dashLength,
             dashGap = s.dashGap,
+            highlighterAlpha = s.hlAlpha,
+            highlighterInverse = s.hlInverse,
         )
     }
 

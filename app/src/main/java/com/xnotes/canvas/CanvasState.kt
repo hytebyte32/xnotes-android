@@ -31,7 +31,8 @@ import kotlin.math.min
  * transparent ink cache that sits above the background — see [CanvasView]. All other
  * ink is cached.
  */
-internal fun CanvasItem.isHighlighterInk(): Boolean = this is Stroke && this.tool == Tool.HIGHLIGHTER
+internal fun CanvasItem.isHighlighterInk(): Boolean =
+    (this is Stroke && this.tool == Tool.HIGHLIGHTER) || (this is com.xnotes.core.model.ShapeItem && this.isHighlighter)
 
 /**
  * A rasterized page cache plus the resolution it was built at and the page-space rect it covers

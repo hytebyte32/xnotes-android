@@ -533,9 +533,8 @@ class InfiniteInteraction(
         stroke.addSample(Sample(p.x, p.y, pressureOf(e, 0)))
         liveStroke = stroke
         mode = CanvasPointerMode.DRAW
-        // Only solid pens arm the snap: a highlighter or a straight-line drag never becomes a shape.
-        dwellEligible = detectShapes() && drawTool.isStroke && drawTool != Tool.HIGHLIGHTER &&
-            !straight && !wandEnabled
+        // Pens and the highlighter arm the snap; a straight-line drag never becomes a shape.
+        dwellEligible = detectShapes() && drawTool.isStroke && !straight && !wandEnabled
         if (dwellEligible) armDwell(Pt(vx, vy))
         onWetStroke(stroke)
         requestRender()
@@ -1002,6 +1001,12 @@ class InfiniteInteraction(
                 dashLength = stroke.config.dashLength,
                 dashGap = stroke.config.dashGap,
             )
+        }
+        if (stroke.tool == Tool.HIGHLIGHTER) {
+            shape.highlighterAlpha = stroke.config.highlighterAlpha
+            shape.highlighterInverse = stroke.config.highlighterInverse
+            shape.neon = false
+            shape.dashed = false
         }
         // The stroke was never committed, so dropping it makes the wet ink vanish the moment it
         // snaps; the eventual pen up then commits nothing.

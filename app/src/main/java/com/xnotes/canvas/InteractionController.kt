@@ -760,11 +760,10 @@ class InteractionController(
         liveStroke = stroke
         strokePageIndex = pageIndex
         mode = PointerMode.DRAW
-        // Shape snap: only solid ink pens (not the highlighter or its straight-line mode) arm the
+        // Shape snap: ink pens and the highlighter (not a straight-line drag) arm the
         // "hold still → shape" timer — never under the wand, whose strokes are ephemeral and must
         // never commit a shape to the page.
-        dwellEligible = detectShapes && drawTool.isStroke && drawTool != Tool.HIGHLIGHTER && !straight &&
-            !wandMode
+        dwellEligible = detectShapes && drawTool.isStroke && !straight && !wandMode
         if (dwellEligible) {
             dwellAnchor = downViewport
             armDwell()
@@ -1003,6 +1002,15 @@ class InteractionController(
         commitRecognizedShape(stroke, pi, rec)
     }
 
+    /** A snapped highlighter stroke keeps its look: translucent, multiplied (or screened), outline only. */
+    private fun applyHighlighter(shape: ShapeItem, stroke: Stroke) {
+        if (stroke.tool != Tool.HIGHLIGHTER) return
+        shape.highlighterAlpha = stroke.config.highlighterAlpha
+        shape.highlighterInverse = stroke.config.highlighterInverse
+        shape.neon = false
+        shape.dashed = false
+    }
+
     /** Replace the (uncommitted) live stroke with a recognized [ShapeItem], as one undoable add. */
     private fun commitRecognizedShape(stroke: Stroke, pageIndex: Int, rec: RecognizedShape) {
         val page = state.document.pages.getOrNull(pageIndex) ?: return
@@ -1024,13 +1032,14 @@ class InteractionController(
                 strokeRgba = color,
                 strokeWidth = strokeWidth,
                 fillRgba = null,
-                neon = stroke.config.neon, // a neon pen snaps to a neon shape (highlighter never snaps)
+                neon = stroke.config.neon, // a neon pen snaps to a neon shape
                 neonStrength = stroke.config.neonStrength,
                 dashed = dashed,
                 dashLength = stroke.config.dashLength,
                 dashGap = stroke.config.dashGap,
             )
         }
+        applyHighlighter(shape, stroke)
         page.items.add(shape)
         state.appendToCache(page, shape)
         history.push(AddItem(page, shape))

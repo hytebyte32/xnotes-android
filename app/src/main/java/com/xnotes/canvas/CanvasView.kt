@@ -548,6 +548,10 @@ class CanvasView @JvmOverloads constructor(
                             // instead of re-tessellating the ribbon every frame.
                             val hc = st.highlighterCacheFor(item, page)
                             r.drawRasterBlended(hc.surface, hc.cover, item.renderColor.a / 255.0, item.blendMode)
+                        } else if (item is com.xnotes.core.model.ShapeItem && item.isHighlighter && !st.isLiftedItem(item) &&
+                            item.bounds().intersects(visLocal)
+                        ) {
+                            item.paint(r) // a snapped highlighter: one multiplied layer over the finished page
                         }
                     }
                 }

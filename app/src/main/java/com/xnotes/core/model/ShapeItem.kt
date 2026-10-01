@@ -41,6 +41,10 @@ class ShapeItem(
     var dashed: Boolean = false,
     var dashLength: Double = 10.0,
     var dashGap: Double = 8.0,
+    /** Above 0 the shape is a highlighter shape (a snapped highlighter stroke): translucent, multiplied, outline only. */
+    var highlighterAlpha: Double = 0.0,
+    /** The inverse highlighter: screened so it lightens a dark page. Used only with [highlighterAlpha]. */
+    var highlighterInverse: Boolean = false,
 ) : CanvasItem, Resizable {
 
     override val kind = KIND
@@ -95,10 +99,28 @@ class ShapeItem(
     }
 
     override fun paint(r: Renderer) {
+        if (isHighlighter) return paintHighlighter(r)
         if (neon) return paintNeon(r)
         fillRgba?.let { drawFill(r, it) }
         drawOutline(r, pen())
         if (shape == ShapeKind.ARROW) drawArrowHead(r, pen())
+    }
+
+    val isHighlighter: Boolean get() = highlighterAlpha > 0.0
+
+    /** How a highlighter shape composites: multiplied, or screened for the inverse highlighter. */
+    val blendMode: com.xnotes.core.pal.BlendMode
+        get() = if (!isHighlighter) com.xnotes.core.pal.BlendMode.SRC_OVER
+        else if (highlighterInverse) com.xnotes.core.pal.BlendMode.SCREEN else com.xnotes.core.pal.BlendMode.MULTIPLY
+
+    /** The outline drawn opaque in one layer and composited once, so a crossing never darkens twice. */
+    private fun paintHighlighter(r: Renderer) {
+        val alpha = highlighterAlpha.coerceIn(0.0, 1.0) * (strokeRgba.a / 255.0)
+        val solid = pen().copy(color = strokeRgba.withAlpha(255), dashed = false)
+        r.saveLayerBlended(bounds().outset(2.0), alpha, blendMode)
+        drawOutline(r, solid)
+        if (shape == ShapeKind.ARROW) drawArrowHead(r, solid)
+        r.restore()
     }
 
     /** Fill the closed-shape interior (no-op for open line/arrow). */
@@ -535,11 +557,13 @@ class ShapeItem(
             dashed: Boolean = false,
             dashLength: Double = 10.0,
             dashGap: Double = 8.0,
+            highlighterAlpha: Double = 0.0,
+            highlighterInverse: Boolean = false,
         ): ShapeItem {
             val box = Rect.bounding(vertices)
             return ShapeItem(
                 shape, box.topLeft, Pt(box.right, box.bottom), strokeRgba, strokeWidth,
-                fillRgba, neon, neonStrength, normalize(vertices, box), dashed, dashLength, dashGap,
+                fillRgba, neon, neonStrength, normalize(vertices, box), dashed, dashLength, dashGap, highlighterAlpha, highlighterInverse,
             )
         }
 

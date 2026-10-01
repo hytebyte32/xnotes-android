@@ -271,6 +271,10 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
             j.name("dash_length").value(s.dashLength)
             j.name("dash_gap").value(s.dashGap)
         }
+        if (s.isHighlighter) {
+            j.name("hl_alpha").value(s.highlighterAlpha)
+            if (s.highlighterInverse) j.name("hl_inverse").value(true)
+        }
         if (s.locked) j.name("locked").value(true)
         j.endObject()
     }
@@ -550,6 +554,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         var dashed = false
         var dashLength = 10.0
         var dashGap = 8.0
+        var hlAlpha = 0.0
+        var hlInverse = false
         var text: String? = null
         var labelH = 0.0
     }
@@ -603,6 +609,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
                 "dashed" -> s.dashed = boolOr(p, false)
                 "dash_length" -> s.dashLength = doubleOr(p, 10.0)
                 "dash_gap" -> s.dashGap = doubleOr(p, 8.0)
+                "hl_alpha" -> s.hlAlpha = doubleOr(p, 0.0)
+                "hl_inverse" -> s.hlInverse = boolOr(p, false)
                 "text" -> s.text = stringOrNull(p)
                 "label_h" -> s.labelH = doubleOr(p, 0.0)
                 "locked" -> s.locked = boolOr(p, false)
@@ -668,7 +676,7 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         s.points?.let { verts ->
             return ShapeItem.poly(
                 kind, verts, strokeRgba, s.strokeWidth, s.fillRgba, s.neon, s.neonStrength,
-                s.dashed, s.dashLength, s.dashGap,
+                s.dashed, s.dashLength, s.dashGap, s.hlAlpha, s.hlInverse,
             )
         }
         return ShapeItem(
@@ -683,6 +691,8 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
             dashed = s.dashed,
             dashLength = s.dashLength,
             dashGap = s.dashGap,
+            highlighterAlpha = s.hlAlpha,
+            highlighterInverse = s.hlInverse,
         )
     }
 

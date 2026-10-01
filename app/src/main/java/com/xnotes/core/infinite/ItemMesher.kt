@@ -216,8 +216,14 @@ object ItemMesher {
     }
 
     private fun meshShape(shape: ShapeItem, tolerance: Double): MeshedItem? {
-        val parts = ShapeTessellator.tessellate(shape, tolerance)
+        var parts = ShapeTessellator.tessellate(shape, tolerance)
         if (parts.isEmpty()) return null
+        if (shape.isHighlighter) {
+            // A snapped highlighter composites like the stroke it came from: multiplied (or screened) last.
+            val pass = if (shape.highlighterInverse) InkPass.SCREEN else InkPass.MULTIPLY
+            val ink = shape.strokeRgba.scaleAlpha(shape.highlighterAlpha)
+            parts = parts.map { MeshPart(it.mesh, ink, pass) }
+        }
         return MeshedItem(parts, shape.paintBounds(), shape.strokeWidth / 2.0)
     }
 
