@@ -6749,6 +6749,15 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         return true
     }
 
+    /** Move the tab at [from] to position [to] while it is being dragged along the strip. */
+    fun moveTab(from: Int, to: Int) {
+        if (!tabsEnabled || from == to || from !in tabs.indices || to !in tabs.indices) return
+        tabs.add(to, tabs.removeAt(from))
+    }
+
+    /** The drag ended: save the new order so it survives a relaunch. */
+    fun commitTabOrder() = saveTabs()
+
     /** Close tab [id], discarding its cache. Closing the active tab moves to the most recent other one, or home. */
     fun closeTab(id: String) {
         val t = tabs.firstOrNull { it.id == id } ?: return
