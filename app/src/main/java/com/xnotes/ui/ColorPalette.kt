@@ -2,6 +2,7 @@ package com.xnotes.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
@@ -55,15 +56,15 @@ private fun sameColour(a: Rgba, b: Rgba) = a.r == b.r && a.g == b.g && a.b == b.
 /**
  * A floating colour bubble: a ring divided evenly into the palette's colours round a centre showing
  * the colour in use. Press the middle with the pen and drag toward a colour; the bigger ring that
- * opens grows the slice under the pen, and lifting picks it. Press the ring itself and drag to move
- * the bubble, which glides on when let go and rebounds off the edges of the canvas.
+ * opens grows the slice under the pen, and lifting picks it. With the Select tool armed, drag the bubble instead to move it; it glides on when let go and rebounds off the edges of the canvas.
  *
- * Only shown while a colour-drawing tool is armed. Touches outside the bubble go straight through to
+ * Shown while a colour-drawing tool is armed (to pick) or the Select tool is (to move it). Touches outside the bubble go straight through to
  * the canvas; a finger on the bubble is ignored unless [allowFinger].
  */
 @Composable
 fun ColorPalette(
     visible: Boolean,
+    movable: Boolean,
     colors: List<Rgba>,
     allowFinger: Boolean,
     posX: Double,
@@ -88,6 +89,7 @@ fun ColorPalette(
         val currentNow by rememberUpdatedState(current)
         val pickNow by rememberUpdatedState(onPick)
         val movedNow by rememberUpdatedState(onMoved)
+        val movableNow by rememberUpdatedState(movable)
 
         // Position in px. Held here (not just in prefs) so a drag and the glide after it are smooth.
         var px by remember { mutableStateOf((posX * w).toFloat()) }
@@ -119,7 +121,7 @@ fun ColorPalette(
                 val sweep = 360f / n
                 for (i in 0 until n) {
                     val on = i == hover
-                    val grow = if (on) 10f * density else 0f
+                    val grow = if (on) 6f * density else 0f
                     slice(Offset(cx, cy), inner, outer + grow, -90f + i * sweep - sweep / 2f, sweep, colors[i].c(), density)
                     if (on) {
                         slice(Offset(cx, cy), inner, outer + grow, -90f + i * sweep - sweep / 2f, sweep, Color.Transparent, density, rim = Color(0xFF111111))
@@ -131,13 +133,13 @@ fun ColorPalette(
                         val col = colors[i].c()
                         val lum = 0.299f * col.red + 0.587f * col.green + 0.114f * col.blue
                         val mark = if (lum > 0.6f) Color(0xFF111111) else Color.White
-                        drawLine(mark, Offset(p.x - 7f * density, p.y), Offset(p.x - 2f * density, p.y + 5f * density), 2.6f * density)
-                        drawLine(mark, Offset(p.x - 2f * density, p.y + 5f * density), Offset(p.x + 8f * density, p.y - 6f * density), 2.6f * density)
+                        drawLine(mark, Offset(p.x - 4f * density, p.y), Offset(p.x - 1f * density, p.y + 3f * density), 1.8f * density)
+                        drawLine(mark, Offset(p.x - 1f * density, p.y + 3f * density), Offset(p.x + 5f * density, p.y - 4f * density), 1.8f * density)
                     }
                 }
                 val shown = if (hover >= 0) colors[hover].c() else inUse.c()
-                drawCircle(Color.White, 26f * density, Offset(cx, cy))
-                drawCircle(shown, 22f * density, Offset(cx, cy))
+                drawCircle(Color.White, 15f * density, Offset(cx, cy))
+                drawCircle(shown, 13f * density, Offset(cx, cy))
             }
         }
 
@@ -148,6 +150,7 @@ fun ColorPalette(
                 .size(BUBBLE_DP.dp)
                 .shadow(6.dp, CircleShape)
                 .background(Color.White, CircleShape)
+                .then(if (movable) Modifier.border(2.dp, Color(0xFF3B82F6), CircleShape) else Modifier)
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         val down = awaitFirstDown(requireUnconsumed = false)
@@ -155,10 +158,8 @@ fun ColorPalette(
                         glide?.cancel()
                         settled = false
                         val id = down.id
-                        val half = bubble / 2f
-                        val fromCentre = hypot(down.position.x - half, down.position.y - half)
-                        // Only the centre disc picks; the ring and the gap round the disc drag the bubble.
-                        val pickMode = fromCentre <= bubble * 0.5f * 0.62f * 0.85f
+                        // With the Select tool armed the bubble only moves; with a drawing tool it only picks.
+                        val pickMode = !movableNow
                         var bx = cxNowValue(px, wNow, marginNow)
                         var by = cyNowValue(py, hNow, marginNow)
                         val tracker = VelocityTracker()
@@ -281,10 +282,10 @@ private fun DrawScope.slice(
     drawArc(color, startDeg + gap / 2f, sweepDeg - gap, false, tl, sz, style = Stroke(band))
 }
 
-private const val BUBBLE_DP = 88f
-private const val RING_INNER_DP = 34f
-private const val RING_OUTER_DP = 84f
-private const val DEAD_ZONE_DP = 20f
+private const val BUBBLE_DP = 48f
+private const val RING_INNER_DP = 20f
+private const val RING_OUTER_DP = 50f
+private const val DEAD_ZONE_DP = 12f
 private const val FRICTION = 4.0f
 private const val REBOUND = 0.55f
 
@@ -298,7 +299,8 @@ fun PaletteHost(editor: Editor, tool: Tool, current: () -> Rgba, pick: (Rgba) ->
     val rev = editor.prefsVersion // read so a preference change redraws the palette
     val p = editor.preferences
     ColorPalette(
-        visible = p.paletteEnabled && toolUsesColour(tool),
+        visible = p.paletteEnabled && (toolUsesColour(tool) || tool == Tool.SELECT),
+        movable = tool == Tool.SELECT,
         colors = p.paletteColors,
         allowFinger = p.paletteFinger,
         posX = p.paletteX,
