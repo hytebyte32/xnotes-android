@@ -107,9 +107,10 @@ class CanvasCodec(private val imageCodec: ImageCodec) {
         // Additive: written only for a limited axis, so an infinite canvas's bytes are unchanged.
         doc.limitW?.let { j.name("limit_w").value(it) }
         doc.limitH?.let { j.name("limit_h").value(it) }
-        // The canvas's top-left, written only when it is not the content origin.
-        if (doc.originX != 0.0) j.name("origin_x").value(doc.originX)
-        if (doc.originY != 0.0) j.name("origin_y").value(doc.originY)
+        // The canvas's top-left, always written: its presence marks the file as one that knows its corner,
+        // so only a canvas from before that existed is migrated on load (see originSeen).
+        j.name("origin_x").value(doc.originX)
+        j.name("origin_y").value(doc.originY)
         writeBackground(j, doc.background)
         // The last view and the waypoints are written only when there is something to say.
         doc.lastView?.let {

@@ -370,6 +370,19 @@ class CanvasCodecTest {
         assertEquals(first, manifestText(reloaded))
     }
 
+    @Test fun aStrokeOverhangingTheCornerDoesNotShiftTheOriginOnReload() {
+        val doc = InfiniteDocument()
+        doc.add(
+            Stroke(
+                Tool.PEN, ToolConfig(),
+                mutableListOf(Sample(0.5, 0.5, 1.0), Sample(40.0, 30.0, 1.0)),
+            ),
+        )
+        val reloaded = codec.read(ByteArrayInputStream(bytesOf(doc)))
+        assertEquals(0.0, reloaded.originX, 0.0)
+        assertEquals(0.0, reloaded.originY, 0.0)
+    }
+
     // --- forgiving load ---
 
     @Test fun aBundleWithNoManifestIsRejected() {
