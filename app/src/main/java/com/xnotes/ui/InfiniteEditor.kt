@@ -201,7 +201,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     /** Whether the minimap is shown. */
-    var minimapVisible by mutableStateOf(true)
+    var minimapVisible by mutableStateOf(false)
         private set
 
     fun toggleMinimap() {

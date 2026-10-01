@@ -836,6 +836,9 @@ class BenchActivity : ComponentActivity() {
         awaitFrame()
         cell.put("load_ms", SystemClock.elapsedRealtime() - tLoad)
         delay(2000)
+        ed.view.publish() // the stats are only refreshed by a drawn frame
+        repeat(3) { awaitFrame() }
+        delay(800)
         val s0 = ed.view.stats
         cell.put("vertices", s0.vertices).put("indices", s0.indices)
         cell.put("vertices_per_stroke", round(s0.vertices.toDouble() / n))
@@ -897,6 +900,12 @@ class BenchActivity : ComponentActivity() {
         glLine("gl ${cfg.name} $n", ed.view.stats)
         ed.replaceDocument(InfiniteDocument())
         Tuning.lodLevel = 0
+        // A fresh editor per cell hands the old geometry buffers back; they never shrink otherwise.
+        stage.removeAllViews()
+        canvas = null
+        System.gc()
+        delay(400)
+        System.gc()
         System.gc()
         delay(700)
     }
