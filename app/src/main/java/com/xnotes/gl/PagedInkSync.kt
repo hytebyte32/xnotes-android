@@ -1,6 +1,7 @@
 package com.xnotes.gl
 
 import com.xnotes.core.geometry.Pt
+import com.xnotes.core.geometry.Rect
 import com.xnotes.core.infinite.ItemMesher
 import com.xnotes.core.infinite.MeshedItem
 import com.xnotes.core.infinite.translated
@@ -48,16 +49,30 @@ class PagedInkSync(
         publishOrder()
     }
 
-    /** Re-file one page after it changed, or after it moved to a new [origin]. */
-    fun refile(page: Page, origin: Pt) {
+    /**
+     * Re-file one page after it changed, or after it moved to a new [origin]. With [dirty] (page-local),
+     * only items that are new, or whose paint extent touches it, are re-meshed; the rest stay as filed.
+     * An eraser drag reports a small region per move, and re-meshing a whole page for each was the cost.
+     */
+    fun refile(page: Page, origin: Pt, dirty: Rect? = null) {
         val old = filed[page].orEmpty()
         val now = page.items
+        val oldSet = IdentityHashMap<CanvasItem, Boolean>()
+        for (it in old) oldSet[it] = true
         if (old.isNotEmpty()) {
             val keep = IdentityHashMap<CanvasItem, Boolean>()
             for (it in now) keep[it] = true
             for (it in old) if (!keep.containsKey(it)) sink.remove(it)
         }
-        sink.batch { fileAll(page, origin) }
+        sink.batch {
+            val items = ArrayList<CanvasItem>(now.size)
+            for (item in now) {
+                val untouched = dirty != null && oldSet.containsKey(item) && !item.paintBounds().intersects(dirty)
+                if (untouched || fileOne(item, origin)) items.add(item)
+            }
+            filed[page] = items
+            if (page !in pageOrder) pageOrder = pageOrder + page
+        }
         publishOrder()
     }
 

@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.os.Handler
 import android.os.Looper
 import com.xnotes.core.geometry.Pt
+import com.xnotes.core.geometry.Rect
 import com.xnotes.core.infinite.CanvasBackground
 import com.xnotes.core.infinite.ItemMesher
 import com.xnotes.core.model.CanvasItem
@@ -166,11 +167,11 @@ class GlInkHost(
         glView.publish()
     }
 
-    override fun inkChanged(page: Page) {
+    override fun inkChanged(page: Page, dirty: Rect?) {
         val i = state.document.pages.indexOfFirst { it === page }
         if (i < 0) return
         val o = originsNow()?.get(i) ?: return
-        sync.refile(page, o)
+        sync.refile(page, o, dirty)
         glView.publish()
     }
 

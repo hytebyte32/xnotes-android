@@ -126,3 +126,54 @@ class PagedInkSyncAppendTest {
         assertEquals(1, r.lastOrder.size)
     }
 }
+
+class PagedInkSyncDirtyTest {
+    private class Rec : InkSink {
+        var upserts = 0
+        val removed = ArrayList<CanvasItem>()
+        var lastOrder: List<CanvasItem> = emptyList()
+        override fun upsert(item: CanvasItem, parts: List<MeshPart>, bounds: Rect) { upserts++ }
+        override fun remove(item: CanvasItem) { removed.add(item) }
+        override fun setOrder(items: List<CanvasItem>) { lastOrder = items }
+        override fun reset() {}
+        override fun batch(block: () -> Unit) = block()
+    }
+
+    private val unit = MeshedItem(
+        listOf(MeshPart(MeshData(doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 1.0), DoubleArray(6), intArrayOf(0, 1, 2)), Rgba(0, 0, 0, 255), InkPass.OPAQUE)),
+        Rect(0.0, 0.0, 10.0, 10.0),
+    )
+
+    private fun setup(): Triple<Rec, PagedInkSync, Page> {
+        val r = Rec()
+        val page = Page(1000.0, 1000.0)
+        page.items.add(LabelItem(Pt(0.0, 0.0), "1", 10.0))
+        page.items.add(LabelItem(Pt(500.0, 500.0), "2", 10.0))
+        val sync = PagedInkSync(r) { unit }
+        sync.rebuild(listOf(page), listOf(Pt(0.0, 0.0)))
+        return Triple(r, sync, page)
+    }
+
+    @Test fun aSmallDirtyRegionOnlyRemeshesWhatItTouches() {
+        val (r, sync, page) = setup()
+        val before = r.upserts
+        sync.refile(page, Pt(0.0, 0.0), Rect(480.0, 480.0, 100.0, 100.0))
+        assertEquals(before + 1, r.upserts)
+        assertEquals(page.items.toList(), r.lastOrder)
+    }
+
+    @Test fun noDirtyRegionRemeshesEverything() {
+        val (r, sync, page) = setup()
+        val before = r.upserts
+        sync.refile(page, Pt(0.0, 0.0))
+        assertEquals(before + 2, r.upserts)
+    }
+
+    @Test fun anErasedItemIsRemovedEvenWithASmallRegion() {
+        val (r, sync, page) = setup()
+        val gone = page.items.removeAt(1)
+        sync.refile(page, Pt(0.0, 0.0), Rect(480.0, 480.0, 100.0, 100.0))
+        assertTrue(r.removed.contains(gone))
+        assertEquals(page.items.toList(), r.lastOrder)
+    }
+}

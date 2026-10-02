@@ -1206,7 +1206,7 @@ class CanvasState(
      * [invalidatePage] for a full rebuild.
      */
     fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
-        glBridge?.let { it.inkChanged(page); return true }
+        glBridge?.let { it.inkChanged(page, dirtyRect); return true }
         repairSharpInk(page, dirtyRect) // erase from the sharp ink layer in place, no re-render
         if (pendingSharp) pendingSharpEdits.add(page to dirtyRect)
         val entry = caches[page] ?: return false
@@ -1806,7 +1806,7 @@ interface GlInkBridge {
     fun layoutChanged()
 
     /** A page's items changed in some way. */
-    fun inkChanged(page: Page)
+    fun inkChanged(page: Page, dirty: Rect? = null)
 
     /** A whole page changed (flow text, rebuild): its ink and its underlay both need refreshing. */
     fun pageInvalidated(page: Page)

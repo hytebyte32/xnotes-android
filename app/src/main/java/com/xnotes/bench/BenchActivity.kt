@@ -91,6 +91,7 @@ class BenchActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        com.xnotes.ui.EditorDefaults.glDefault = false // baselines measure the Skia path; the GL smoke test turns GL on itself
         installCrashCapture()
         @Suppress("DEPRECATION")
         refreshMs = 1000.0 / windowManager.defaultDisplay.refreshRate.toDouble().coerceAtLeast(30.0)

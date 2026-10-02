@@ -4094,6 +4094,13 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
      */
     private var glInk: com.xnotes.canvas.GlInkHost? = null
 
+    /** Whether GL ink is wanted: on by default, off only if the user toggled it off. A rotated view pauses it. */
+    private var glWanted = EditorDefaults.glDefault
+
+    init {
+        if (glWanted && state.rotationDeg == 0) setGlInk(true)
+    }
+
     /** The GL ink host while GL ink is on, for the bench. */
     val glInkHost: com.xnotes.canvas.GlInkHost? get() = glInk
 
@@ -4122,6 +4129,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             android.widget.Toast.makeText(view.context, "GL ink needs an upright view", android.widget.Toast.LENGTH_SHORT).show()
             return
         }
+        glWanted = !wasOn
         setGlInk(!wasOn)
         android.widget.Toast.makeText(view.context, if (!wasOn) "GL ink: on" else "GL ink: off", android.widget.Toast.LENGTH_SHORT).show()
     }
@@ -4134,7 +4142,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             val cur = if (state.didInitialFit) state.currentPageIndex() else 0
             state.viewingMode = new.mode
             state.rotationDeg = new.rotation
-            if (new.rotation != 0 && glInk != null) toggleGlInk()
+            if (new.rotation != 0 && glInk != null) setGlInk(false)
+            if (new.rotation == 0 && glInk == null && glWanted) setGlInk(true)
             state.verticalScroll = new.verticalScroll
             state.flipOffsetX = 0.0
             if (new.verticalScroll) state.fitHeightActive = false // a paginated-only magnet
@@ -7030,4 +7039,11 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             noteOpen = false
         }
     }
+}
+
+/** Process-wide editor defaults the bench can flip to compare renderers. */
+object EditorDefaults {
+    /** GL ink for paged notes, on unless a bench baseline asks for the Skia path. */
+    @JvmField
+    var glDefault: Boolean = true
 }
