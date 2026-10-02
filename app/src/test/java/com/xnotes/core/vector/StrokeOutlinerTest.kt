@@ -43,7 +43,7 @@ class StrokeOutlinerTest {
 
     private fun xRange(m: MeshData): Pair<Double, Double> {
         val xs = (0 until m.vertexCount).map { m.positions[2 * it] }
-        return xs.min() to xs.max()
+        return xs.minOrNull()!! to xs.maxOrNull()!!
     }
 
     private val seg = listOf(Pt(0.0, 0.0), Pt(10.0, 0.0))

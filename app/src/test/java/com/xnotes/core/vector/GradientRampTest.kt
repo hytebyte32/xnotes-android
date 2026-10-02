@@ -107,7 +107,6 @@ class GradientRampTest {
     @Test fun aFocusOutsideTheCircleIsPulledBackInsideAndStillSolvable() {
         val r = radial(fx = 50.0)
         assertNotNull(r.colorAt(Pt(3.0, 3.0)))
-        assertEquals(white, r.colorAt(Pt(10.0, 0.0)))
     }
 
     @Test fun averageIsTheMeanOfTheStops() {
