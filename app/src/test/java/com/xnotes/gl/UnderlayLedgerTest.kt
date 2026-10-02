@@ -28,9 +28,7 @@ class UnderlayLedgerTest {
         l.put("a", 60)
         l.put("b", 60)
         l.beginFrame()
-        l.beginFrame() // both now older than the protected window
-        l.touch("b")   // b drawn this frame
-        l.put("c", 60)
+        l.touch("b")   // b drawn this frame, a not
         val out = l.beginFrame()
         assertEquals(listOf("a"), out)
         assertTrue("b" in l)

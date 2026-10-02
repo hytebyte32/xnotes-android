@@ -61,7 +61,7 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          [ -f build.log ] && grep -E "^e: " build.log | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
+          cat build.log test.log 2>/dev/null | grep -E "^e: " | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
 
       - name: Upload APK
         if: ${{ !cancelled() }}
