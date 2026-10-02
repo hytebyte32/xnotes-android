@@ -21,14 +21,14 @@ class PagedInkSyncTest {
         val upserts = ArrayList<Pair<CanvasItem, Rect>>()
         val firstX = HashMap<CanvasItem, Double>()
         val removed = ArrayList<CanvasItem>()
-        var order: List<CanvasItem> = emptyList()
+        var lastOrder: List<CanvasItem> = emptyList()
         var resets = 0
         override fun upsert(item: CanvasItem, parts: List<MeshPart>, bounds: Rect) {
             upserts.add(item to bounds)
             firstX[item] = parts[0].mesh.positions[0]
         }
         override fun remove(item: CanvasItem) { removed.add(item) }
-        override fun setOrder(items: List<CanvasItem>) { order = items }
+        override fun setOrder(items: List<CanvasItem>) { lastOrder = items }
         override fun reset() { resets++ }
         override fun batch(block: () -> Unit) = block()
     }
@@ -56,7 +56,7 @@ class PagedInkSyncTest {
         val a = Page(1.0, 1.0).also { it.items.addAll(listOf(item(), item())) }
         val b = Page(1.0, 1.0).also { it.items.add(item()) }
         PagedInkSync(r) { unit }.rebuild(listOf(a, b), listOf(Pt(0.0, 0.0), Pt(0.0, 10.0)))
-        assertEquals(listOf(a.items[0], a.items[1], b.items[0]), r.order)
+        assertEquals(listOf(a.items[0], a.items[1], b.items[0]), r.lastOrder)
     }
 
     @Test fun refileRemovesItemsThatLeftThePage() {
@@ -67,15 +67,15 @@ class PagedInkSyncTest {
         val gone = a.items.removeAt(0)
         sync.refile(a, Pt(0.0, 0.0))
         assertTrue(r.removed.any { it === gone })
-        assertEquals(1, r.order.size)
-        assertSame(a.items[0], r.order[0])
+        assertEquals(1, r.lastOrder.size)
+        assertSame(a.items[0], r.lastOrder[0])
     }
 
     @Test fun itemsThatMeshToNothingAreNotInTheOrder() {
         val r = Recorder()
         val a = Page(1.0, 1.0).also { it.items.add(item()) }
         PagedInkSync(r) { null }.rebuild(listOf(a), listOf(Pt(0.0, 0.0)))
-        assertTrue(r.order.isEmpty())
+        assertTrue(r.lastOrder.isEmpty())
     }
 
     @Test fun dropTakesAPagesInkOut() {
@@ -85,7 +85,7 @@ class PagedInkSyncTest {
         val sync = PagedInkSync(r) { unit }
         sync.rebuild(listOf(a, b), listOf(Pt(0.0, 0.0), Pt(0.0, 10.0)))
         sync.drop(a)
-        assertEquals(listOf(b.items[0]), r.order)
+        assertEquals(listOf(b.items[0]), r.lastOrder)
         assertTrue(r.removed.any { it === a.items[0] })
     }
 }
@@ -93,10 +93,10 @@ class PagedInkSyncTest {
 class PagedInkSyncAppendTest {
     private class Rec : InkSink {
         var upserts = 0
-        var order: List<CanvasItem> = emptyList()
+        var lastOrder: List<CanvasItem> = emptyList()
         override fun upsert(item: CanvasItem, parts: List<MeshPart>, bounds: Rect) { upserts++ }
         override fun remove(item: CanvasItem) {}
-        override fun setOrder(items: List<CanvasItem>) { order = items }
+        override fun setOrder(items: List<CanvasItem>) { lastOrder = items }
         override fun reset() {}
         override fun batch(block: () -> Unit) = block()
     }
@@ -116,13 +116,13 @@ class PagedInkSyncAppendTest {
         a.items.add(added)
         sync.appendItem(a, added, Pt(0.0, 0.0))
         assertEquals(before + 1, r.upserts)
-        assertEquals(listOf(a.items[0], added), r.order)
+        assertEquals(listOf(a.items[0], added), r.lastOrder)
     }
 
     @Test fun appendToAnUnfiledPageRefilesIt() {
         val r = Rec()
         val a = Page(1.0, 1.0).also { it.items.add(LabelItem(Pt(0.0, 0.0), "1", 10.0)) }
         PagedInkSync(r) { unit }.appendItem(a, a.items[0], Pt(0.0, 0.0))
-        assertEquals(1, r.order.size)
+        assertEquals(1, r.lastOrder.size)
     }
 }
