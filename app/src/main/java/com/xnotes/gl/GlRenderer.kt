@@ -179,12 +179,24 @@ class GlRenderer : GLSurfaceView.Renderer {
         onContextReady?.invoke(contextGen)
     }
 
+    @Volatile private var surfaceW = 0
+    @Volatile private var surfaceH = 0
+
     override fun onSurfaceChanged(unused: GL10?, width: Int, height: Int) {
+        surfaceW = width
+        surfaceH = height
         GLES30.glViewport(0, 0, width, height)
     }
 
     override fun onDrawFrame(unused: GL10?) {
-        val f = frame
+        // A resize can leave the published frame describing the old surface for a moment; draw at the
+        // surface's real size so the content is cropped or extended, never stretched.
+        val published = frame
+        val f = if (surfaceW > 0 && (published.widthPx != surfaceW || published.heightPx != surfaceH)) {
+            published.copy(widthPx = surfaceW, heightPx = surfaceH)
+        } else {
+            published
+        }
         if (f.widthPx <= 0 || f.heightPx <= 0) return
         // Taken before the frame, not after: something added while this one draws is waiting on
         // the next frame, not on this one.

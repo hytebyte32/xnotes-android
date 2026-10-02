@@ -91,14 +91,6 @@ class GlInkHost(
         glView.scene = paged
         paged.onNeedTextures = { stale -> main.post { render(stale) } }
         paged.onNeedFlow = { stale -> main.post { renderFlow(stale) } }
-        // When the surface itself is resized (the keyboard going away), draw it at the latest camera
-        // at once rather than the old one at the new size, which showed as a one-frame jump.
-        glView.afterLayout = {
-            if (attached && glView.width > 0 && glView.height > 0) {
-                val o = state.origin()
-                camera(state.zoom, o.x, o.y, glView.width, glView.height)
-            }
-        }
         scene.onNeedText = { item, key, bucket -> main.post { renderText(item, key, bucket) } }
     }
 
