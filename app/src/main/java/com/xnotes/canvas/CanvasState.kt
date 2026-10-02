@@ -324,6 +324,12 @@ class CanvasState(
     var fitHeightActive: Boolean = false
 
     /** Items excluded from the cache (lifted for selection/editing); set by the interaction layer. */
+    /** Set while GL draws the ink and page underlays: the Skia caches are not built and changes are reported here instead. */
+    var glBridge: GlInkBridge? = null
+
+    /** Resolution a page underlay should be rendered at for the current zoom, capped as the Skia caches are. */
+    fun underlayRes(page: Page): Double = clampedRes(page)
+
     var isLiftedItem: (CanvasItem) -> Boolean = { false }
 
     /**
@@ -506,6 +512,7 @@ class CanvasState(
             contentW = 2 * sideMargin
             contentH = 2 * vertMargin
             currentRow = 0
+            glBridge?.layoutChanged()
             return
         }
         // Rects hold the pages' display footprints — rotation swaps their width/height. A row's
@@ -546,6 +553,7 @@ class CanvasState(
         pageRects = rects.map { it!! }
         currentRow = currentRow.coerceIn(0, rows.lastIndex)
         clampScroll()
+        glBridge?.layoutChanged()
     }
 
     /** Index (into [rowRanges]) of the row containing [pageIndex]. */
@@ -1167,6 +1175,7 @@ class CanvasState(
 
     /** Append a single just-committed stroke into an existing cache (cheap), else rebuild. */
     fun appendToCache(page: Page, item: CanvasItem) {
+        glBridge?.let { it.itemAppended(page, item); return }
         if (item.isHighlighterInk()) return // composited live over the page, never cached
         appendToSharpInk(page, item) // keep the sharp viewport crisp without a full re-render
         if (pendingSharp) pendingSharpEdits.add(page to item.paintBounds().outset(SHARP_EDIT_PAD))
@@ -1194,6 +1203,7 @@ class CanvasState(
      * [invalidatePage] for a full rebuild.
      */
     fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
+        glBridge?.let { it.inkChanged(page); return true }
         repairSharpInk(page, dirtyRect) // erase from the sharp ink layer in place, no re-render
         if (pendingSharp) pendingSharpEdits.add(page to dirtyRect)
         val entry = caches[page] ?: return false
@@ -1217,6 +1227,7 @@ class CanvasState(
         staleInk.remove(page)
         cacheGen++
         sharpGen++
+        glBridge?.inkChanged(page)
     }
 
     /**
@@ -1231,18 +1242,21 @@ class CanvasState(
      */
     fun invalidatePaper() {
         sharpGen++
+        glBridge?.everythingChanged()
     }
 
     fun invalidateBackground(page: Page) {
         bgCaches.remove(page)
         cacheGen++
         sharpGen++
+        glBridge?.backgroundChanged(page)
     }
 
     fun invalidateAllBackgrounds() {
         bgCaches.clear()
         cacheGen++
         sharpGen++
+        glBridge?.everythingChanged()
     }
 
     /**
@@ -1255,6 +1269,7 @@ class CanvasState(
     fun invalidatePageGeometry() {
         cacheGen++
         sharpGen++
+        glBridge?.everythingChanged()
     }
 
     fun invalidateAllCaches() {
@@ -1265,6 +1280,7 @@ class CanvasState(
         wetInk.clear()
         cacheGen++
         sharpGen++
+        glBridge?.everythingChanged()
     }
 
     /**
@@ -1435,6 +1451,7 @@ class CanvasState(
 
     /** Runs after the visible pages are scheduled, so they build first; a pinch moving the zoom keeps the band but prefetches nothing. */
     fun prefetchAndPrune() {
+        if (glBridge != null) return
         val band = cacheBand()
         if (!zoomingInProgress) {
             for (page in band.prefetch) {
@@ -1775,4 +1792,25 @@ class CanvasState(
         const val TOP_GAP = 16.0
         val TRANSPARENT = Rgba(0, 0, 0, 0)
     }
+}
+
+/**
+ * What the GL ink host needs to hear from [CanvasState]. The paged model has no per-item change
+ * events: edits end in one of the invalidations below, which is where these are raised.
+ */
+interface GlInkBridge {
+    /** Page rects or the page list changed. */
+    fun layoutChanged()
+
+    /** A page's items changed in some way. */
+    fun inkChanged(page: Page)
+
+    /** One just-committed item joined [page] (the cheap path of an ordinary pen stroke). */
+    fun itemAppended(page: Page, item: CanvasItem)
+
+    /** A page's paper, ruling, PDF or flow text changed. */
+    fun backgroundChanged(page: Page)
+
+    /** Everything may have changed (margins, styles, a swapped document). */
+    fun everythingChanged()
 }

@@ -89,3 +89,40 @@ class PagedInkSyncTest {
         assertTrue(r.removed.any { it === a.items[0] })
     }
 }
+
+class PagedInkSyncAppendTest {
+    private class Rec : InkSink {
+        var upserts = 0
+        var order: List<CanvasItem> = emptyList()
+        override fun upsert(item: CanvasItem, parts: List<MeshPart>, bounds: Rect) { upserts++ }
+        override fun remove(item: CanvasItem) {}
+        override fun setOrder(items: List<CanvasItem>) { order = items }
+        override fun reset() {}
+        override fun batch(block: () -> Unit) = block()
+    }
+
+    private val unit = MeshedItem(
+        listOf(MeshPart(MeshData(doubleArrayOf(0.0, 0.0, 1.0, 0.0, 0.0, 1.0), DoubleArray(6), intArrayOf(0, 1, 2)), Rgba(0, 0, 0, 255), InkPass.OPAQUE)),
+        Rect(0.0, 0.0, 10.0, 10.0),
+    )
+
+    @Test fun appendFilesOnlyTheNewItem() {
+        val r = Rec()
+        val a = Page(1.0, 1.0).also { it.items.add(LabelItem(Pt(0.0, 0.0), "1", 10.0)) }
+        val sync = PagedInkSync(r) { unit }
+        sync.rebuild(listOf(a), listOf(Pt(0.0, 0.0)))
+        val before = r.upserts
+        val added = LabelItem(Pt(0.0, 0.0), "2", 10.0)
+        a.items.add(added)
+        sync.appendItem(a, added, Pt(0.0, 0.0))
+        assertEquals(before + 1, r.upserts)
+        assertEquals(listOf(a.items[0], added), r.order)
+    }
+
+    @Test fun appendToAnUnfiledPageRefilesIt() {
+        val r = Rec()
+        val a = Page(1.0, 1.0).also { it.items.add(LabelItem(Pt(0.0, 0.0), "1", 10.0)) }
+        PagedInkSync(r) { unit }.appendItem(a, a.items[0], Pt(0.0, 0.0))
+        assertEquals(1, r.order.size)
+    }
+}

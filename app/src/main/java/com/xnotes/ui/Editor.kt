@@ -1116,6 +1116,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             controller.onTouch(ev)
         }
         view.onTwoFingerTap = { dispatchTapGesture(preferences.twoFingerTap) }
+        view.onFiveFingerTap = { toggleGlInk() }
         view.onThreeFingerTap = { dispatchTapGesture(preferences.threeFingerTap) }
         view.hover = { controller.onHover(it) }
         view.genericMotion = { controller.onGenericMotion(it) }
@@ -4081,6 +4082,33 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     }
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
+    /**
+     * Temporary switch (five-finger tap) between the Skia ink path and the GL path for paged notes,
+     * so the two can be compared on the tablet. Images and text boxes are not drawn in GL mode yet.
+     */
+    private var glInk: com.xnotes.canvas.GlInkHost? = null
+
+    private fun toggleGlInk() {
+        val on = glInk?.let { false } ?: true
+        if (on && state.rotationDeg != 0) {
+            android.widget.Toast.makeText(view.context, "GL ink needs an upright view", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (on) {
+            val host = com.xnotes.canvas.GlInkHost(view.context, state, view) { controller.frontInk?.holding(it) == true }
+            surfaces.addView(host.glView, 0, android.widget.FrameLayout.LayoutParams(-1, -1))
+            host.attach()
+            glInk = host
+        } else {
+            glInk?.let {
+                it.detach()
+                surfaces.removeView(it.glView)
+            }
+            glInk = null
+        }
+        android.widget.Toast.makeText(view.context, if (on) "GL ink: on" else "GL ink: off", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
         if (prev.mode != new.mode || prev.rotation != new.rotation || prev.verticalScroll != new.verticalScroll) {
             // Re-group / re-orient / re-flow the pages, keep the reader on the same page, and
@@ -4089,6 +4117,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             val cur = if (state.didInitialFit) state.currentPageIndex() else 0
             state.viewingMode = new.mode
             state.rotationDeg = new.rotation
+            if (new.rotation != 0 && glInk != null) toggleGlInk()
             state.verticalScroll = new.verticalScroll
             state.flipOffsetX = 0.0
             if (new.verticalScroll) state.fitHeightActive = false // a paginated-only magnet

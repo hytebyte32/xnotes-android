@@ -57,6 +57,21 @@ class PagedInkSync(
         publishOrder()
     }
 
+    /**
+     * One item joined the end of [page] (an ordinary committed stroke): file just it, rather than
+     * re-meshing the page. Falls back to [refile] when the page was never filed.
+     */
+    fun appendItem(page: Page, item: CanvasItem, origin: Pt) {
+        val old = filed[page]
+        if (old == null) return refile(page, origin)
+        val meshed = mesh(item)
+        if (meshed == null || meshed.isEmpty) return
+        val moved = meshed.translated(origin.x, origin.y)
+        sink.upsert(item, moved.parts, moved.bounds)
+        if (old.none { it === item }) filed[page] = old + item
+        publishOrder()
+    }
+
     /** A page was removed from the note: take all its ink out. */
     fun drop(page: Page) {
         val old = filed.remove(page) ?: return

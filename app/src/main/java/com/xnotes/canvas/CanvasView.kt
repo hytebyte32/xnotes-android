@@ -66,6 +66,9 @@ class CanvasView @JvmOverloads constructor(
     /** Clean three-finger tap (finger-only, brief, near-stationary), for the configurable gesture. */
     var onThreeFingerTap: (() -> Unit)? = null
 
+    /** A clean five-finger tap; used to flip the temporary GL-ink switch. */
+    var onFiveFingerTap: (() -> Unit)? = null
+
     /** Invoked after the viewport is (re)laid out and the initial fit applied. */
     var afterLayout: (() -> Unit)? = null
 
@@ -308,7 +311,9 @@ class CanvasView @JvmOverloads constructor(
                 if (fourFingerActive) {
                     fourFingerActive = false
                     val quick = e.eventTime - gestureDownMs <= TAP_TIMEOUT_MS
-                    if (quick && !fourMoved && gestureMaxPointers == 4) {
+                    if (quick && !fourMoved && gestureMaxPointers >= 5) {
+                        onFiveFingerTap?.invoke()
+                    } else if (quick && !fourMoved && gestureMaxPointers == 4) {
                         debugOverlay.toggle()
                         startDebugTick()
                         requestRender()
@@ -430,8 +435,46 @@ class CanvasView @JvmOverloads constructor(
         invalidate()
     }
 
+    /**
+     * Set while a GL view under this one draws the paper, page backgrounds and all ink. This view
+     * then only keeps the camera in step, clears itself transparent so the GL view shows through,
+     * and draws what is still Skia: tool overlays, the scrollbar and the debug HUD.
+     */
+    var glMode: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            invalidate()
+        }
+
+    /** Called from every draw in [glMode] with the zoom and the screen position of content (0,0). */
+    var glCamera: ((zoom: Double, originX: Double, originY: Double) -> Unit)? = null
+
+    /** Runs a callback once the GL view's next frame has been drawn; set by the GL host. */
+    var glAfterFrame: ((Runnable) -> Unit)? = null
+
+    private fun drawGlMode(canvas: Canvas, st: CanvasState) {
+        canvas.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR)
+        val origin = st.origin()
+        glCamera?.invoke(st.zoom, origin.x, origin.y)
+        val r = AndroidRenderer(canvas)
+        drawOverlay?.invoke(r, canvas)
+        if (st.overscrollY > 1.0) {
+            drawOverscrollIndicator(canvas, st)
+        } else if (!st.verticalScroll && st.flipOffsetX > 1.0 && st.currentRow >= st.rowRanges().size - 1) {
+            drawFlipAddPageIndicator(canvas, st)
+        }
+        drawScrollbar(canvas, st)
+        debugOverlay.sampleFrame(System.nanoTime())
+        debugOverlay.draw(r, st)
+    }
+
     override fun onDraw(canvas: Canvas) {
         val st = state ?: return
+        if (glMode) {
+            drawGlMode(canvas, st)
+            return
+        }
         canvas.drawColor(st.palette.bg.toArgb())
 
         val r = AndroidRenderer(canvas)
@@ -694,6 +737,11 @@ class CanvasView @JvmOverloads constructor(
             if (done) return@Runnable
             done = true
             action()
+        }
+        glAfterFrame?.let { gl ->
+            gl(once)
+            mainHandler.postDelayed(once, FRAME_COMMIT_TIMEOUT_MS)
+            return
         }
         // A detached view has no live observer to register with, and the timer covers it.
         if (android.os.Build.VERSION.SDK_INT >= 29 && isAttachedToWindow) {

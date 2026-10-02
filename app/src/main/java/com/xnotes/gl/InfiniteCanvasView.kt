@@ -208,6 +208,12 @@ class InfiniteCanvasView @JvmOverloads constructor(
         requestRender()
     }
 
+    /** Run [action] on the GL thread after the next frame is drawn, and draw one. */
+    fun afterFrame(action: () -> Unit) {
+        glRenderer.runAfterFrame(action)
+        requestRender()
+    }
+
     /** Run [work] on the GL thread, for GPU state that must be touched with the context current. */
     fun onGlThread(work: () -> Unit) = queueEvent(work)
 
