@@ -370,6 +370,10 @@ class FrontInk(
      * than a stroke that never reaches the canvas.
      */
     private fun capture() {
+        // With GL ink the canvas under the pad is a separate surface that a window capture comes back
+        // black for, which showed as a black square the size of the stroke. GL draws the committed
+        // stroke itself, and the pad comes down after the GL frame that has it, so no capture is needed.
+        if (view.glMode) return finish()
         val box = pad.strokeBox() ?: return finish()
         val window = window() ?: return finish()
         val src = inWindow(window, box) ?: return finish()
