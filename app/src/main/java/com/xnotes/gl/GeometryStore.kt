@@ -170,6 +170,20 @@ class GeometryStore(private val committed: Boolean = false) {
         vertexAllocator.reset()
         indexAllocator.reset()
         outOfMemory = false
+        planned = false
+    }
+
+    /**
+     * Set once a load has said how much it will need in all. Growth past that plan is by what is
+     * wanted plus an eighth, not half again: a plan that came up a little short must not leave the
+     * buffers a third bigger than the document, on both the CPU and the GPU side.
+     */
+    private var planned = false
+
+    /** Size the buffers once for a whole load of about [vertices] and [indices] more. */
+    fun plan(vertices: Long, indices: Long) {
+        planned = true
+        reserve(vertices, indices)
     }
 
     /** Room for [vertices] and [indices] more in one step, so a bulk load does not double its way up. */
@@ -177,11 +191,11 @@ class GeometryStore(private val committed: Boolean = false) {
         // A reservation that cannot be had is not a failure: the puts behind it grow as they need to.
         val vertexCap = vertexAllocator.reservedCapacity(vertices)
         if (vertexCap != null && vertexCap > vertexAllocator.capacity) {
-            resize(vertexMirror, vertexAllocator, geometric(vertexAllocator.capacity, vertexCap), VERTEX_STRIDE)?.let { vertexMirror = it }
+            resize(vertexMirror, vertexAllocator, if (planned) vertexCap else geometric(vertexAllocator.capacity, vertexCap), VERTEX_STRIDE)?.let { vertexMirror = it }
         }
         val indexCap = indexAllocator.reservedCapacity(indices)
         if (indexCap != null && indexCap > indexAllocator.capacity) {
-            resize(indexMirror, indexAllocator, geometric(indexAllocator.capacity, indexCap), INDEX_STRIDE)?.let { indexMirror = it }
+            resize(indexMirror, indexAllocator, if (planned) indexCap else geometric(indexAllocator.capacity, indexCap), INDEX_STRIDE)?.let { indexMirror = it }
         }
     }
 

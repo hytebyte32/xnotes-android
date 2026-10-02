@@ -436,6 +436,12 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
             } else {
                 scene.batch { for (k in chunk) pushItem(items[k]) }
             }
+            if (n == 0 && chunks.size > 1) {
+                // The first chunk says how big a stroke is here; size the buffers once for the rest, rather
+                // than growing them in steps that each leave a second copy behind until the driver lets go.
+                val rest = (items.size - chunk.count()).toDouble() / chunk.count()
+                scene.planLoad((scene.lastBatchVertices * rest).toLong(), (scene.lastBatchIndices * rest).toLong())
+            }
             val t1 = System.nanoTime()
             meshNs += t1 - t0
             if (backPressure && n < chunks.size - 1) backPressure = waitForRenderThread()

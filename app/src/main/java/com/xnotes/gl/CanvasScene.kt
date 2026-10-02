@@ -85,6 +85,9 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
 
         /** Room for the batch queued right behind it, so the buffers grow once for all of it. */
         class Reserve(val vertices: Long, val indices: Long) : Edit()
+
+        /** The projected size of the rest of a load, so the buffers are sized once instead of growing in steps. */
+        class Plan(val vertices: Long, val indices: Long) : Edit()
         object Reset : Edit()
     }
 
@@ -275,9 +278,22 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
                     indices += part.mesh.indices.size
                 }
             }
+            lastBatchVertices = vertices
+            lastBatchIndices = indices
             pending.add(Edit.Reserve(vertices, indices))
             pending.addAll(edits)
         }
+    }
+
+    /** What the last top-level [batch] came to, for projecting a load's total from its first chunk. */
+    var lastBatchVertices = 0L
+        private set
+    var lastBatchIndices = 0L
+        private set
+
+    /** Say how much more a load in progress will add, so the buffers are sized once for all of it. */
+    fun planLoad(vertices: Long, indices: Long) {
+        pending.add(Edit.Plan(vertices, indices))
     }
 
     private fun post(edit: Edit) {
@@ -1053,6 +1069,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
                 is Edit.Remove -> applyRemove(edit.item)
                 is Edit.Order -> applyOrder(edit.items)
                 is Edit.Reserve -> store.reserve(edit.vertices, edit.indices)
+                is Edit.Plan -> store.plan(edit.vertices, edit.indices)
                 Edit.Reset -> applyReset()
             }
         }
