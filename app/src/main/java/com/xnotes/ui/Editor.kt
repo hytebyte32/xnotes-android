@@ -1388,6 +1388,11 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             val idx = pf?.indexOf?.get(page)
             if (pf != null && idx != null) FlowPainter.paintPage(renderer, pf.frame, idx, region)
         }
+        state.flowOnPage = { page ->
+            val pf = publishedFlow
+            val idx = pf?.indexOf?.get(page)
+            pf != null && idx != null && pf.frame.pagesWithLines().contains(idx)
+        }
     }
 
     /** Feed the layout derived highlight colours (published on the main thread only). */
@@ -1496,12 +1501,13 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         if (editingTable != null || tableMenu != null) tableChromeTick++
         publishedPageList = doc.pages.toList()
         scheduleHighlight()
-        if (invalidate) {
-            val stale = HashSet<Page>()
-            oldFlow?.frame?.pagesWithLines()?.forEach { i -> oldPages.getOrNull(i)?.let(stale::add) }
-            frame.pagesWithLines().forEach { i -> publishedPageList.getOrNull(i)?.let(stale::add) }
-            stale.forEach { if (index.containsKey(it)) state.invalidatePage(it) }
-        }
+        val stale = HashSet<Page>()
+        oldFlow?.frame?.pagesWithLines()?.forEach { i -> oldPages.getOrNull(i)?.let(stale::add) }
+        frame.pagesWithLines().forEach { i -> publishedPageList.getOrNull(i)?.let(stale::add) }
+        stale.retainAll { index.containsKey(it) }
+        // The GL flow layer follows every republish, typing included; the Skia caches only on a settled one.
+        glInk?.flowChanged(stale)
+        if (invalidate && glInk == null) stale.forEach { state.invalidatePage(it) }
     }
 
     /** Republish the flow when its content or the page list moved (cheap no-op otherwise). */

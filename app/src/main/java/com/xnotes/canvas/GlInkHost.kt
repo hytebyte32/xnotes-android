@@ -66,6 +66,9 @@ class GlInkHost(
     private var globalGen = 0L
     private val pageGen = IdentityHashMap<Page, Long>()
     private val inFlight = IdentityHashMap<Page, Long>()
+    private val flowGen = IdentityHashMap<Page, Long>()
+    private val flowWanted = IdentityHashMap<Page, Long>()
+    private val flowInFlight = IdentityHashMap<Page, Long>()
 
     private var origins: List<Pt> = emptyList()
     private var filedPages: List<Page> = emptyList()
@@ -87,6 +90,15 @@ class GlInkHost(
         glView.background = CanvasBackground(pattern = PagePattern.NONE)
         glView.scene = paged
         paged.onNeedTextures = { stale -> main.post { render(stale) } }
+        paged.onNeedFlow = { stale -> main.post { renderFlow(stale) } }
+        // When the surface itself is resized (the keyboard going away), draw it at the latest camera
+        // at once rather than the old one at the new size, which showed as a one-frame jump.
+        glView.afterLayout = {
+            if (attached && glView.width > 0 && glView.height > 0) {
+                val o = state.origin()
+                camera(state.zoom, o.x, o.y, glView.width, glView.height)
+            }
+        }
         scene.onNeedText = { item, key, bucket -> main.post { renderText(item, key, bucket) } }
     }
 
@@ -116,10 +128,10 @@ class GlInkHost(
 
     // --- camera ---
 
-    private fun camera(zoom: Double, ox: Double, oy: Double) {
+    private fun camera(zoom: Double, ox: Double, oy: Double, widthPx: Int = state.viewportW, heightPx: Int = state.viewportH) {
         val vp = glView.viewport
-        vp.widthPx = state.viewportW
-        vp.heightPx = state.viewportH
+        vp.widthPx = widthPx
+        vp.heightPx = heightPx
         vp.zoom = zoom
         vp.scrollX = -ox / zoom
         vp.scrollY = -oy / zoom
@@ -168,6 +180,13 @@ class GlInkHost(
         val o = originsNow()?.get(i) ?: return
         sync.refile(page, o)
         glView.publish()
+    }
+
+    /** Flow text changed on [pages] (every page when null): its layer re-renders, the underlay does not. */
+    fun flowChanged(pages: Collection<Page>?) {
+        val targets = pages ?: state.document.pages
+        for (p in targets) flowGen[p] = (flowGen[p] ?: 0L) + 1
+        republishPages()
     }
 
     override fun pageInvalidated(page: Page) {
@@ -224,6 +243,11 @@ class GlInkHost(
                 rect = state.pageRects[i],
                 version = (globalGen * 1_000_003L + (pageGen[p] ?: 0L)) * 64L + bucketFor(p),
                 paperRgb = state.paperColor(p).toArgb() and 0xFFFFFF,
+                flowVersion = if (state.flowOnPage?.invoke(p) == true) {
+                    ((globalGen * 1_000_003L + (flowGen[p] ?: 0L)) * 128L + bucketFor(p) + 1L).also { flowWanted[p] = it }
+                } else {
+                    0L
+                },
             )
         }
         glView.publish()
@@ -252,6 +276,42 @@ class GlInkHost(
                 }
             }
         }
+    }
+
+    private fun renderFlow(stale: List<PageQuad>) {
+        for (q in stale) {
+            val page = q.key as Page
+            val version = q.flowVersion
+            if (flowInFlight[page] == version) continue
+            flowInFlight[page] = version
+            val res = resForBucket((version - 1L) % 128L)
+            renderPool.execute {
+                val bmp = runCatching { renderFlowLayer(page, res) }.getOrNull()
+                main.post {
+                    if (flowInFlight[page] == version) flowInFlight.remove(page)
+                    // A render that lost the race to a newer keystroke is dropped, so text never steps backwards.
+                    if (bmp != null && flowWanted[page] == version) {
+                        paged.flow.submit(page, bmp, version)
+                        glView.publish()
+                    } else {
+                        bmp?.recycle()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Flow text alone, on a transparent bitmap the size of the page's footprint. */
+    private fun renderFlowLayer(page: Page, res: Double): Bitmap {
+        val cover = state.footprint(page)
+        val w = ceil(cover.w * res).toInt().coerceIn(1, MAX_EDGE)
+        val h = ceil(cover.h * res).toInt().coerceIn(1, MAX_EDGE)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val r = AndroidRenderer(Canvas(bmp))
+        r.scale(w / cover.w, h / cover.h)
+        r.translate(-cover.left, -cover.top)
+        state.paintFlow?.invoke(page, r, cover)
+        return bmp
     }
 
     /** Snapshot of what GL holds and drew, for the bench's smoke test. */
@@ -330,7 +390,6 @@ class GlInkHost(
         r.translate(-cover.left, -cover.top)
         r.fillRect(cover, state.paperColor(page))
         if (state.hasPageBackground(page)) state.paintPageBackground?.invoke(page, r, res, cover)
-        if (!state.flowLifted) state.paintFlow?.invoke(page, r, cover)
         if (state.pageBorders) r.strokeRect(cover, Pen(state.palette.paperBorder, 1.0, cosmetic = true))
         return bmp
     }

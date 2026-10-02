@@ -458,26 +458,6 @@ class CanvasView @JvmOverloads constructor(
         val origin = st.origin()
         glCamera?.invoke(st.zoom, origin.x, origin.y)
         val r = AndroidRenderer(canvas)
-        if (st.flowLifted) {
-            // A live caret session keeps the flow out of the underlay; draw it here so keystrokes show at once.
-            r.save()
-            r.translate(origin.x, origin.y)
-            r.scale(st.zoom, st.zoom)
-            val visible = st.visibleContentRect()
-            for (i in st.document.pages.indices) {
-                if (i !in st.drawablePageRange()) continue
-                val pr = st.pageRects.getOrNull(i) ?: continue
-                if (!pr.intersects(visible)) continue
-                val page = st.document.pages[i]
-                r.withSave {
-                    r.clipRect(pr)
-                    r.translate(pr.left, pr.top)
-                    st.applyPageTransform(r, page)
-                    st.paintFlow?.invoke(page, r, st.displayRectToPage(page, visible.translate(-pr.left, -pr.top)))
-                }
-            }
-            r.restore()
-        }
         drawOverlay?.invoke(r, canvas)
         if (st.overscrollY > 1.0) {
             drawOverscrollIndicator(canvas, st)

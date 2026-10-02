@@ -348,6 +348,9 @@ class CanvasState(
      */
     var paintFlow: ((page: Page, renderer: Renderer, region: Rect) -> Unit)? = null
 
+    /** Whether [page] has any flow text, so GL knows to keep a flow layer for it. */
+    var flowOnPage: ((Page) -> Boolean)? = null
+
     /**
      * True while a flow-text caret session is live: screen ink caches build WITHOUT
      * the flow and [CanvasView] paints it immediate-mode each frame instead, so a

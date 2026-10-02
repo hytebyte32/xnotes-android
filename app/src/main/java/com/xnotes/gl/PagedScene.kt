@@ -16,6 +16,9 @@ class PagedScene(val ink: CanvasScene) : GlScene {
 
     val underlay = PageUnderlay<Any>()
 
+    /** Flow text, one transparent texture per page that has any, drawn over the underlay and under the ink. */
+    val flow = PageUnderlay<Any>(budgetBytes = 64L * 1024 * 1024)
+
     @Volatile
     var pages: List<PageQuad> = emptyList()
 
@@ -26,6 +29,10 @@ class PagedScene(val ink: CanvasScene) : GlScene {
     @Volatile
     var onNeedTextures: ((List<PageQuad>) -> Unit)? = null
 
+    /** Like [onNeedTextures], for the pages whose flow layer is missing or out of date. */
+    @Volatile
+    var onNeedFlow: ((List<PageQuad>) -> Unit)? = null
+
     private var shader: ImageShader? = null
     private var contextGen = -1
 
@@ -33,6 +40,7 @@ class PagedScene(val ink: CanvasScene) : GlScene {
         this.contextGen = contextGen
         shader = null
         underlay.onContextCreated(contextGen)
+        flow.onContextCreated(contextGen)
         try {
             shader = ImageShader(contextGen)
         } catch (e: GlShaderException) {
@@ -44,10 +52,14 @@ class PagedScene(val ink: CanvasScene) : GlScene {
     override fun drawContent(frame: FrameState) {
         underlay.beginFrame()
         underlay.uploadPending()
+        flow.beginFrame()
+        flow.uploadPending()
         val all = pages
         val near = PageQuads.inView(all, frame.zoom, frame.scrollX, frame.scrollY, frame.widthPx, frame.heightPx, marginPx = frame.heightPx.toDouble())
         val stale = near.filter { underlay.versionOf(it.key) != it.version }
         if (stale.isNotEmpty()) onNeedTextures?.invoke(stale)
+        val staleFlow = near.filter { it.flowVersion != 0L && flow.versionOf(it.key) != it.flowVersion }
+        if (staleFlow.isNotEmpty()) onNeedFlow?.invoke(staleFlow)
 
         val visible = PageQuads.inView(near, frame.zoom, frame.scrollX, frame.scrollY, frame.widthPx, frame.heightPx)
         val s = shader
@@ -56,6 +68,7 @@ class PagedScene(val ink: CanvasScene) : GlScene {
             val c = PageQuads.corners(page.rect, frame.zoom, frame.scrollX, frame.scrollY, frame.widthPx, frame.heightPx)
             val drawn = s != null && s.contextGen == contextGen && underlay.draw(s, page.key, c)
             if (!drawn) fillPaper(page, frame)
+            if (page.flowVersion != 0L && s != null && s.contextGen == contextGen) flow.draw(s, page.key, c, premultiplied = true)
         }
         ink.drawContent(frame)
     }

@@ -12,6 +12,8 @@ class PageQuad(
     val version: Long,
     /** Packed 0xRRGGBB shown until the texture arrives, so a page never flashes the desk colour. */
     val paperRgb: Int,
+    /** 0 when the page has no flow text; otherwise bumped whenever its flow layer changes. */
+    val flowVersion: Long = 0L,
 )
 
 /** Pure placement maths for page quads, so it tests without a GL context. */
