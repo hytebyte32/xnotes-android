@@ -1227,7 +1227,7 @@ class CanvasState(
         staleInk.remove(page)
         cacheGen++
         sharpGen++
-        glBridge?.inkChanged(page)
+        glBridge?.pageInvalidated(page)
     }
 
     /**
@@ -1804,6 +1804,9 @@ interface GlInkBridge {
 
     /** A page's items changed in some way. */
     fun inkChanged(page: Page)
+
+    /** A whole page changed (flow text, rebuild): its ink and its underlay both need refreshing. */
+    fun pageInvalidated(page: Page)
 
     /** One just-committed item joined [page] (the cheap path of an ordinary pen stroke). */
     fun itemAppended(page: Page, item: CanvasItem)

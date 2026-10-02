@@ -382,6 +382,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         val program = ink ?: return
         if (program.contextGen != contextGen) return
         if (records.isEmpty() && wetParts.isEmpty() && tailParts.isEmpty()) {
+            visibleVectors = 0; visibleImages = 0; visibleTexts = 0; recordCount = records.size
             lastDrawCalls = 0
             lastVisibleItems = 0
             return

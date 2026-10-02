@@ -170,6 +170,12 @@ class GlInkHost(
         glView.publish()
     }
 
+    override fun pageInvalidated(page: Page) {
+        inkChanged(page)
+        pageGen[page] = (pageGen[page] ?: 0L) + 1
+        republishPages()
+    }
+
     override fun itemAppended(page: Page, item: CanvasItem) {
         val i = state.document.pages.indexOfFirst { it === page }
         if (i < 0) return
