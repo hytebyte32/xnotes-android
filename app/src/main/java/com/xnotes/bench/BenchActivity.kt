@@ -82,6 +82,10 @@ class BenchActivity : ComponentActivity() {
     private val results = JSONObject()
     private var refreshMs = 16.6
 
+    private val pickNotes = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) startNoteCheck(uri)
+    }
+
     private var paged: Editor? = null
     private var canvas: InfiniteEditor? = null
 
@@ -107,6 +111,7 @@ class BenchActivity : ComponentActivity() {
         button("Run memory") { startMemory() }
         button("Run decision") { startDecision() }
         button("Run heap") { startHeap() }
+        button("Check my notes") { pickNotes.launch(null) }
         button("Copy report") { copyReport() }
         button("Save JSON") { saveJson() }
         panel.addView(row)
@@ -971,6 +976,24 @@ class BenchActivity : ComponentActivity() {
     }
 
     // --- Memory investigation: where does the GL canvas's process memory go ---
+
+    /** Round-trips every .xnote and .xcanvas under [tree] through the unified .xdoc format, writing nothing to it. */
+    private fun startNoteCheck(tree: android.net.Uri) {
+        if (job?.isActive == true) return
+        text.setLength(0)
+        reportView.text = ""
+        beginAutosave()
+        job = scope.launch {
+            try {
+                val r = withContext(Dispatchers.IO) { NoteCheck(this@BenchActivity) { s -> runOnUiThread { line(s) } }.run(tree) }
+                results.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+                results.put("note_check", r)
+            } catch (t: Throwable) {
+                line("FAILED: ${t.stackTraceToString().take(900)}")
+            }
+            line("done")
+        }
+    }
 
     private fun startMemory() {
         if (job?.isActive == true) return
