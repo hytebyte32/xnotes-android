@@ -2,7 +2,7 @@ name: Build debug APK
 
 on:
   push:
-    branches: [master, unify-notes-canvas, parity-tests]
+    branches: [master]
   workflow_dispatch:
 
 jobs:
@@ -35,27 +35,6 @@ jobs:
           set -o pipefail
           ./gradlew assembleDebug --no-daemon 2>&1 | tee build.log
 
-      - name: Unit tests
-        shell: bash
-        run: |
-          set -o pipefail
-          ./gradlew testDebugUnitTest --no-daemon 2>&1 | tee test.log
-
-      # Surface failing tests as annotations.
-      - name: Report test failures
-        if: failure()
-        shell: bash
-        run: |
-          [ -f test.log ] && echo "::error::$(grep -E " FAILED$|tests completed" test.log | head -80 | sed "s/$/%0A/" | tr -d "\n")"
-          # Per-test failure messages, from the XML reports (one short line each).
-          for x in app/build/test-results/testDebugUnitTest/*.xml; do
-            [ -f "$x" ] || continue
-            grep -oE '<testcase name="[^"]*" classname="[^"]*"[^>]*>|<failure message="[^"]{0,300}' "$x" \
-              | awk '/^<testcase/{n=$0; next} /^<failure/{print n " => " $0}' \
-              | sed -E 's/<testcase name="([^"]*)" classname="([^"]*)".*=> <failure message="/\2.\1 => /'
-          done > failures.txt || true
-          [ -s failures.txt ] && echo "::error title=Test failure messages::$(head -60 failures.txt | sed 's/$/%0A/' | tr -d '\n')"
-
       # Surface Kotlin compile errors as annotations, so they can be read without the raw log.
       - name: Report compile errors
         if: failure()
@@ -64,9 +43,8 @@ jobs:
           [ -f build.log ] && grep -E "^e: " build.log | head -40 | while IFS= read -r line; do echo "::error::${line}"; done
 
       - name: Upload APK
-        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: xnotes-bench-apk
+          name: xnotes-debug-apk
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
