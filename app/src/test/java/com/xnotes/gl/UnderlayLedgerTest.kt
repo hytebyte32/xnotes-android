@@ -55,7 +55,7 @@ class UnderlayLedgerTest {
         l.beginFrame()
         l.beginFrame()
         l.beginFrame()
-        assertEquals(1, l.size.let { 3 - it }.coerceAtMost(1))
+        assertEquals(2, l.size)
         assertTrue(l.residentBytes <= 100)
     }
 
