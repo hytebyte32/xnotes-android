@@ -10,6 +10,7 @@ import com.xnotes.core.infinite.CanvasBackground
 import com.xnotes.core.infinite.ItemMesher
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.TextItem
 import com.xnotes.core.model.PagePattern
 import com.xnotes.core.pal.Pen
 import com.xnotes.gl.CanvasScene
@@ -18,6 +19,7 @@ import com.xnotes.gl.InfiniteCanvasView
 import com.xnotes.gl.PageQuad
 import com.xnotes.gl.PagedInkSync
 import com.xnotes.gl.PagedScene
+import com.xnotes.gl.TextBuckets
 import com.xnotes.platform.AndroidRenderer
 import java.util.IdentityHashMap
 import java.util.concurrent.Executors
@@ -47,9 +49,11 @@ class GlInkHost(
 
     private val scene = CanvasScene()
     private val paged = PagedScene(scene)
-    private val sync = PagedInkSync(CanvasSceneSink(scene)) { item ->
-        if (state.isLiftedItem(item) || held(item)) null else ItemMesher.mesh(item, simplify = 0.0)
-    }
+    private val sync = PagedInkSync(
+        CanvasSceneSink(scene),
+        skip = { item -> state.isLiftedItem(item) || held(item) },
+        mesh = { item -> ItemMesher.mesh(item, simplify = 0.0) },
+    )
 
     private val main = Handler(Looper.getMainLooper())
     private val renderPool = Executors.newFixedThreadPool(2) { r ->
@@ -83,6 +87,7 @@ class GlInkHost(
         glView.background = CanvasBackground(pattern = PagePattern.NONE)
         glView.scene = paged
         paged.onNeedTextures = { stale -> main.post { render(stale) } }
+        scene.onNeedText = { item, key, bucket -> main.post { renderText(item, key, bucket) } }
     }
 
     /** Hand drawing over to GL. Pass the page list as it stands. */
@@ -241,6 +246,38 @@ class GlInkHost(
                 }
             }
         }
+    }
+
+    private val textInFlight = IdentityHashMap<TextItem, Long>()
+
+    /** Render a text box with Skia for [bucket]'s density and hand the bitmap to the scene's text layer. */
+    private fun renderText(item: TextItem, key: Long, bucket: Int) {
+        val want = key * 64L + bucket
+        if (textInFlight[item] == want) return
+        textInFlight[item] = want
+        val res = TextBuckets.resFor(bucket)
+        renderPool.execute {
+            val bmp = runCatching { renderTextBox(item, res) }.getOrNull()
+            main.post {
+                if (textInFlight[item] == want) textInFlight.remove(item)
+                if (bmp != null) {
+                    scene.textLayer.submit(item, bmp, want)
+                    glView.publish()
+                }
+            }
+        }
+    }
+
+    private fun renderTextBox(item: TextItem, res: Double): Bitmap {
+        val b = item.bounds()
+        val w = ceil(b.w * res).toInt().coerceIn(1, MAX_EDGE)
+        val h = ceil(b.h * res).toInt().coerceIn(1, MAX_EDGE)
+        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val r = AndroidRenderer(Canvas(bmp))
+        r.scale(w / b.w.coerceAtLeast(1e-6), h / b.h.coerceAtLeast(1e-6))
+        r.translate(-b.x, -b.y)
+        item.paint(r)
+        return bmp
     }
 
     /** Paper, border, PDF/ruling and flow text for [page] at [res]: everything static under the ink. */

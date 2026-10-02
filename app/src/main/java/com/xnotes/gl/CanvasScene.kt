@@ -13,6 +13,7 @@ import com.xnotes.core.infinite.MeshPart
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Rgba
+import com.xnotes.core.model.TextItem
 import java.util.IdentityHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import kotlin.math.floor
@@ -53,6 +54,13 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         var z: Int,
         /** Set for a placed image, which is drawn as a texture rather than as coloured triangles. */
         val image: ImageItem? = null,
+        /** Set for a text box, drawn as a texture the host renders with Skia. */
+        val textItem: TextItem? = null,
+        /** Content stamp of the text box when it was filed; a texture is current when it matches. */
+        val textKey: Long = 0L,
+        /** Displacement from the item's own space to the plane, for ink filed from a page. */
+        val dx: Double = 0.0,
+        val dy: Double = 0.0,
     )
 
     /** An edit handed over from the main thread. */
@@ -69,6 +77,10 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
              * can fall between them and show one blank frame where the stroke should be.
              */
             val clearsWet: Boolean = false,
+            val textItem: TextItem? = null,
+            val textKey: Long = 0L,
+            val dx: Double = 0.0,
+            val dy: Double = 0.0,
         ) : Edit()
 
         /**
@@ -211,9 +223,27 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
     }
 
     /** File a placed image. It carries no geometry: the renderer draws it as a textured quad. */
-    fun upsertImage(item: ImageItem, bounds: Rect) {
-        post(Edit.Upsert(item, emptyList(), bounds, item, false))
+    fun upsertImage(item: ImageItem, bounds: Rect, dx: Double = 0.0, dy: Double = 0.0) {
+        post(Edit.Upsert(item, emptyList(), bounds, item, false, dx = dx, dy = dy))
     }
+
+    /**
+     * File a text box. It is drawn as a texture the host renders on request ([onNeedText]); [bounds]
+     * is where it sits in the plane and [key] stamps what the texture has to show.
+     */
+    fun upsertText(item: TextItem, bounds: Rect, key: Long) {
+        post(Edit.Upsert(item, emptyList(), bounds, null, false, textItem = item, textKey = key))
+    }
+
+    /** Text-box textures, rendered by the host with Skia and held here until evicted. */
+    val textLayer = PageUnderlay<Any>(TEXT_BUDGET_BYTES)
+
+    /**
+     * Called on the GL thread when a text box has no texture, or one made for something else:
+     * the box, the stamp it was filed with, and the pixel density to render at.
+     */
+    @Volatile
+    var onNeedText: ((item: TextItem, key: Long, bucket: Int) -> Unit)? = null
 
     fun remove(item: CanvasItem) {
         post(Edit.Remove(item))
@@ -321,6 +351,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
             Log.e(TAG, "ink shaders unavailable", e)
         }
         textures.onContextCreated(contextGen)
+        textLayer.onContextCreated(contextGen)
         // The mirrors survived, so the whole document re-uploads without re-tessellating anything.
         store.onContextCreated(contextGen)
         wetStore.onContextCreated(contextGen)
@@ -331,6 +362,8 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         drainEdits()
         textures.beginFrame()
         textures.uploadPending()
+        textLayer.beginFrame()
+        textLayer.uploadPending()
         glowTarget.resize(frame.widthPx, frame.heightPx, contextGen)
         val program = ink ?: return
         if (program.contextGen != contextGen) return
@@ -381,6 +414,16 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
                 runStart = -1
                 runCount = 0
                 drawImage(record, record.image, frame)
+                rebind(program, frame, camChunkX, camChunkY)
+                store.bindForDraw(contextGen)
+                store.bindAttributes(program)
+                continue
+            }
+            if (record.textItem != null) {
+                flushRun(runStart, runCount)
+                runStart = -1
+                runCount = 0
+                drawTextQuad(record, record.textItem, frame)
                 rebind(program, frame, camChunkX, camChunkY)
                 store.bindForDraw(contextGen)
                 store.bindAttributes(program)
@@ -679,9 +722,23 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         lift: LiftTransform = LiftTransform.NONE,
     ) {
         val shader = imageShader ?: return
-        if (image === cropGhost) drawImageQuad(shader, image, image.fullRect().translate(lift.dx, lift.dy), null, 0.35, frame)
-        val rect = image.rect.translate(lift.dx, lift.dy)
+        if (image === cropGhost) drawImageQuad(shader, image, image.fullRect().translate(lift.dx + record.dx, lift.dy + record.dy), null, 0.35, frame)
+        val rect = image.rect.translate(lift.dx + record.dx, lift.dy + record.dy)
         drawImageQuad(shader, image, rect, if (image.isCropped) image.crop else null, 1.0, frame)
+    }
+
+    /**
+     * A text box: the host's Skia rendering of it, as a premultiplied texture over the record's
+     * bounds. Whatever is resident is drawn even when it is a size or a stamp behind, so a pinch or
+     * an edit never blanks the box while the fresh one is made.
+     */
+    private fun drawTextQuad(record: Record, text: TextItem, frame: FrameState) {
+        val shader = imageShader ?: return
+        val bucket = TextBuckets.bucketFor(frame.zoom, record.bounds.w, record.bounds.h)
+        val want = record.textKey * 64L + bucket
+        if (textLayer.versionOf(text) != want) onNeedText?.invoke(text, record.textKey, bucket)
+        val corners = PageQuads.corners(record.bounds, frame.zoom, frame.scrollX, frame.scrollY, frame.widthPx, frame.heightPx)
+        if (textLayer.draw(shader, text, corners, premultiplied = true)) lastDrawCalls++
     }
 
     /** The whole image being cropped, shown dimmed under the visible part so the hidden rest can be seen. */
@@ -1101,8 +1158,11 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
             val slice = store.put(part.mesh, baked) ?: continue
             parts.add(Part(slice, part.pass, part.color.withAlpha(255), part.color.a / 255.0, part.glow))
         }
-        if (parts.isEmpty() && edit.image == null) return
-        val record = Record(edit.item, parts, edit.bounds, previousZ ?: nextZ++, edit.image)
+        if (parts.isEmpty() && edit.image == null && edit.textItem == null) return
+        val record = Record(
+            edit.item, parts, edit.bounds, previousZ ?: nextZ++, edit.image,
+            edit.textItem, edit.textKey, edit.dx, edit.dy,
+        )
         records[edit.item] = record
         fileRecord(record)
     }
@@ -1286,6 +1346,9 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
 
     companion object {
         private const val TAG = "xnotes.gl"
+
+        /** Texture memory for text boxes. */
+        const val TEXT_BUDGET_BYTES = 48L * 1024 * 1024
 
         /** Widest cell span a record is binned across before it is just tested on every frame. */
         private const val MAX_FILE_CELLS = 256L

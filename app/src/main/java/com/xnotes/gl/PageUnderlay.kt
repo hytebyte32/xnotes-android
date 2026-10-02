@@ -81,10 +81,10 @@ class PageUnderlay<K : Any>(budgetBytes: Long = DEFAULT_BUDGET_BYTES) {
      * Draw [key]'s texture over the clip-space quad [corners] (top-left, top-right, bottom-left,
      * bottom-right). False when nothing is resident yet, so the caller can fall back to plain paper.
      */
-    fun draw(shader: ImageShader, key: K, corners: FloatArray): Boolean {
+    fun draw(shader: ImageShader, key: K, corners: FloatArray, premultiplied: Boolean = false): Boolean {
         val e = entries[key] ?: return false
         ledger.touch(key)
-        shader.draw(corners, e.texture, 0)
+        shader.draw(corners, e.texture, 0, premultiplied = premultiplied)
         return true
     }
 

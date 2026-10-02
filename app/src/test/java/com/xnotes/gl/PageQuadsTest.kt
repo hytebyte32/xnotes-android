@@ -54,3 +54,19 @@ class PageQuadsTest {
         assertSame(m, m.translated(0.0, 0.0))
     }
 }
+
+class TextBucketsTest {
+    @Test fun bucketRoundsUpToHalfOctaves() {
+        val a = TextBuckets.bucketFor(1.0, 100.0, 100.0)
+        val b = TextBuckets.bucketFor(1.3, 100.0, 100.0)
+        val c = TextBuckets.bucketFor(2.1, 100.0, 100.0)
+        assertEquals(true, TextBuckets.resFor(a) >= 1.0)
+        assertEquals(true, TextBuckets.resFor(b) >= 1.3)
+        assertEquals(true, c > b)
+    }
+
+    @Test fun hugeBoxesAreCapped() {
+        val r = TextBuckets.resFor(TextBuckets.bucketFor(8.0, 3000.0, 100.0))
+        assertEquals(true, 3000.0 * r <= TextBuckets.MAX_EDGE_PX * 1.42)
+    }
+}

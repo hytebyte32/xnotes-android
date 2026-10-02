@@ -32,6 +32,7 @@ class ImageShader(contextGen: Int) {
         crop: com.xnotes.core.geometry.Rect? = null,
         flipH: Boolean = false,
         flipV: Boolean = false,
+        premultiplied: Boolean = false,
     ) {
         if (texture == 0) return
         program.use()
@@ -48,8 +49,11 @@ class ImageShader(contextGen: Int) {
         GLES30.glBindTexture(GLES30.GL_TEXTURE_2D, texture)
         program.set("uTexture", 0)
         GLES30.glEnable(GLES30.GL_BLEND)
-        GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        // Skia bitmaps are premultiplied: their colour already carries the alpha, so the blend must not apply it twice.
+        if (premultiplied) GLES30.glBlendFunc(GLES30.GL_ONE, GLES30.GL_ONE_MINUS_SRC_ALPHA)
+        else GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
+        if (premultiplied) GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
     }
 
     companion object {

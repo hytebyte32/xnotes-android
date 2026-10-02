@@ -5,7 +5,9 @@ import com.xnotes.core.infinite.ItemMesher
 import com.xnotes.core.infinite.MeshedItem
 import com.xnotes.core.infinite.translated
 import com.xnotes.core.model.CanvasItem
+import com.xnotes.core.model.ImageItem
 import com.xnotes.core.model.Page
+import com.xnotes.core.model.TextItem
 import java.util.IdentityHashMap
 
 /**
@@ -19,13 +21,15 @@ import java.util.IdentityHashMap
  * with a great many strokes pays for all of them on each edit; a per-item version stamp would cut
  * that, and is the obvious next step once this is measured.
  *
- * Only vector items go through here: strokes, shapes and labels. Images and text boxes are wired in
- * later steps, so [mesh] returns null for them and they are simply not filed.
+ * Vector items (strokes, shapes, labels) are meshed. Images are filed as textured quads from their
+ * own space, and text boxes as textures the host renders, both displaced to the page.
  *
  * Main thread only.
  */
 class PagedInkSync(
     private val sink: InkSink,
+    /** Items to leave out for now, e.g. lifted by a drag or still owned by the front-buffer pad. */
+    private val skip: (CanvasItem) -> Boolean = { false },
     private val mesh: (CanvasItem) -> MeshedItem? = { ItemMesher.mesh(it) },
 ) {
 
@@ -64,10 +68,7 @@ class PagedInkSync(
     fun appendItem(page: Page, item: CanvasItem, origin: Pt) {
         val old = filed[page]
         if (old == null) return refile(page, origin)
-        val meshed = mesh(item)
-        if (meshed == null || meshed.isEmpty) return
-        val moved = meshed.translated(origin.x, origin.y)
-        sink.upsert(item, moved.parts, moved.bounds)
+        if (!fileOne(item, origin)) return
         if (old.none { it === item }) filed[page] = old + item
         publishOrder()
     }
@@ -88,23 +89,54 @@ class PagedInkSync(
 
     private fun fileAll(page: Page, origin: Pt) {
         val items = ArrayList<CanvasItem>(page.items.size)
-        for (item in page.items) {
-            val meshed = mesh(item)
-            if (meshed == null || meshed.isEmpty) {
-                sink.remove(item)
-                continue
-            }
-            val moved = meshed.translated(origin.x, origin.y)
-            sink.upsert(item, moved.parts, moved.bounds)
-            items.add(item)
-        }
+        for (item in page.items) if (fileOne(item, origin)) items.add(item)
         filed[page] = items
         if (page !in pageOrder) pageOrder = pageOrder + page
+    }
+
+    /** File one item; false when it draws nothing (or is being left out) and so is not in the order. */
+    private fun fileOne(item: CanvasItem, origin: Pt): Boolean {
+        if (skip(item)) {
+            sink.remove(item)
+            return false
+        }
+        when (item) {
+            is ImageItem -> {
+                sink.upsertImage(item, item.paintBounds().translate(origin.x, origin.y), origin.x, origin.y)
+                return true
+            }
+            is TextItem -> {
+                if (item.text.isEmpty()) {
+                    sink.remove(item)
+                    return false
+                }
+                sink.upsertText(item, item.bounds().translate(origin.x, origin.y), textKey(item))
+                return true
+            }
+            else -> {
+                val meshed = mesh(item)
+                if (meshed == null || meshed.isEmpty) {
+                    sink.remove(item)
+                    return false
+                }
+                val moved = meshed.translated(origin.x, origin.y)
+                sink.upsert(item, moved.parts, moved.bounds)
+                return true
+            }
+        }
     }
 
     private fun publishOrder() {
         val all = ArrayList<CanvasItem>()
         for (p in pageOrder) filed[p]?.let { all.addAll(it) }
         sink.setOrder(all)
+    }
+
+    companion object {
+        /** Stamp of everything that changes how a text box looks; a texture is current when it matches. */
+        fun textKey(t: TextItem): Long {
+            val h = java.util.Objects.hash(t.text, t.font, t.pointSize, t.rgba, t.width, t.height)
+            return h.toLong() and 0x7FFFFFFFL
+        }
     }
 }
