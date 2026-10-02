@@ -264,6 +264,8 @@ class GlInkHost(
         scene.textFiled, scene.textLayer.textureCount, scene.textRequested, textRenders, textFailures, lastTextError,
     )
 
+    fun filedCount(): Int = sync.filedCount()
+
     private var textRenders = 0
     private var textFailures = 0
     private var lastTextError = ""

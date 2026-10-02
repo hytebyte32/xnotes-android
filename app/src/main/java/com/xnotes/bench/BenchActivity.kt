@@ -1072,7 +1072,7 @@ class BenchActivity : ComponentActivity() {
         ed.controller.selectAll()
         settle()
         val lifted = c()
-        line("      selected: vec ${full.vectors}->${lifted.vectors} img ${full.images}->${lifted.images} txt ${full.texts}->${lifted.texts}")
+        line("      filed ${host.filedCount()}, sel ${ed.controller.hasSelection}, selected: vec ${full.vectors}->${lifted.vectors} img ${full.images}->${lifted.images} txt ${full.texts}->${lifted.texts}")
         ed.controller.clearSelection()
         settle()
         after = c()
@@ -1086,7 +1086,7 @@ class BenchActivity : ComponentActivity() {
         settle()
         val gone = c()
         row("delete: page emptied and GL follows", page.items.isEmpty() && gone.vectors + gone.images + gone.texts < full.vectors + full.images + full.texts,
-            "items ${page.items.size}, drawn vec ${gone.vectors} img ${gone.images} txt ${gone.texts}")
+            "items ${page.items.size}, filed ${host.filedCount()}, sel ${ed.controller.hasSelection}, ${gone}")
         ed.undo()
         settle()
         after = c()
@@ -1094,6 +1094,7 @@ class BenchActivity : ComponentActivity() {
             "items ${page.items.size}, vec ${after.vectors} img ${after.images} txt ${after.texts}")
 
         // 6. pages
+        st.scrollY = 0.0; st.clampScroll(); st.fitWidth(); settle()
         val pages0 = st.document.pages.size
         ed.insertPageAfter(0)
         settle()
@@ -1103,6 +1104,7 @@ class BenchActivity : ComponentActivity() {
         row("page deleted", st.document.pages.size == pages0 && c().vectors > 0, c().toString())
 
         // 7. off and on again
+        st.scrollY = 0.0; st.clampScroll(); st.fitWidth()
         ed.setGlInk(false)
         awaitFrame()
         row("GL off", st.glBridge == null && !ed.view.glMode, "")

@@ -73,6 +73,9 @@ class PagedInkSync(
         publishOrder()
     }
 
+    /** Items currently filed across all pages, for diagnostics. */
+    fun filedCount(): Int = filed.values.sumOf { it.size }
+
     /** A page was removed from the note: take all its ink out. */
     fun drop(page: Page) {
         val old = filed.remove(page) ?: return
