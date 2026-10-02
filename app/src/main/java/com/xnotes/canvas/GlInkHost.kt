@@ -248,6 +248,15 @@ class GlInkHost(
         }
     }
 
+    private var textRenders = 0
+    private var textFailures = 0
+    private var lastTextError = ""
+
+    /** One line for the debug HUD: what the GL side has done about text boxes. */
+    fun hud(): String =
+        "gl txt filed${scene.textFiled} drawn${scene.textDrawnLast} tex${scene.textLayer.textureCount} " +
+            "asked${scene.textRequested} rend$textRenders fail$textFailures$lastTextError"
+
     private val textInFlight = IdentityHashMap<TextItem, Long>()
 
     /** Render a text box with Skia for [bucket]'s density and hand the bitmap to the scene's text layer. */
@@ -257,9 +266,15 @@ class GlInkHost(
         textInFlight[item] = want
         val res = TextBuckets.resFor(bucket)
         renderPool.execute {
-            val bmp = runCatching { renderTextBox(item, res) }.getOrNull()
+            val result = runCatching { renderTextBox(item, res) }
+            val bmp = result.getOrNull()
             main.post {
                 if (textInFlight[item] == want) textInFlight.remove(item)
+                textRenders++
+                result.exceptionOrNull()?.let {
+                    textFailures++
+                    lastTextError = " " + it.javaClass.simpleName + ":" + (it.message ?: "").take(40)
+                }
                 if (bmp != null) {
                     scene.textLayer.submit(item, bmp, want)
                     glView.publish()

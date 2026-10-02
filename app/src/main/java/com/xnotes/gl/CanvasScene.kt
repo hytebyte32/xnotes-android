@@ -238,6 +238,12 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
     /** Text-box textures, rendered by the host with Skia and held here until evicted. */
     val textLayer = PageUnderlay<Any>(TEXT_BUDGET_BYTES)
 
+    /** Text-box counters for the debug HUD: filed ever, drawn last frame, textures requested. */
+    @Volatile var textFiled = 0
+    @Volatile var textDrawnLast = 0
+    @Volatile var textRequested = 0
+    private var textDrawnNow = 0
+
     /**
      * Called on the GL thread when a text box has no texture, or one made for something else:
      * the box, the stamp it was filed with, and the pixel density to render at.
@@ -362,6 +368,8 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         drainEdits()
         textures.beginFrame()
         textures.uploadPending()
+        textDrawnLast = textDrawnNow
+        textDrawnNow = 0
         textLayer.beginFrame()
         textLayer.uploadPending()
         glowTarget.resize(frame.widthPx, frame.heightPx, contextGen)
@@ -736,7 +744,11 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         val shader = imageShader ?: return
         val bucket = TextBuckets.bucketFor(frame.zoom, record.bounds.w, record.bounds.h)
         val want = record.textKey * 64L + bucket
-        if (textLayer.versionOf(text) != want) onNeedText?.invoke(text, record.textKey, bucket)
+        if (textLayer.versionOf(text) != want) {
+            textRequested++
+            onNeedText?.invoke(text, record.textKey, bucket)
+        }
+        textDrawnNow++
         val corners = PageQuads.corners(record.bounds, frame.zoom, frame.scrollX, frame.scrollY, frame.widthPx, frame.heightPx)
         if (textLayer.draw(shader, text, corners, premultiplied = true)) lastDrawCalls++
     }
@@ -1158,6 +1170,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
             val slice = store.put(part.mesh, baked) ?: continue
             parts.add(Part(slice, part.pass, part.color.withAlpha(255), part.color.a / 255.0, part.glow))
         }
+        if (edit.textItem != null) textFiled++
         if (parts.isEmpty() && edit.image == null && edit.textItem == null) return
         val record = Record(
             edit.item, parts, edit.bounds, previousZ ?: nextZ++, edit.image,
