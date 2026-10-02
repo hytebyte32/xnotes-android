@@ -4088,12 +4088,13 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
      */
     private var glInk: com.xnotes.canvas.GlInkHost? = null
 
-    private fun toggleGlInk() {
-        val on = glInk?.let { false } ?: true
-        if (on && state.rotationDeg != 0) {
-            android.widget.Toast.makeText(view.context, "GL ink needs an upright view", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
+    /** The GL ink host while GL ink is on, for the bench. */
+    val glInkHost: com.xnotes.canvas.GlInkHost? get() = glInk
+
+    /** Turn GL ink on or off; returns the host when on, or null (off, or refused for a rotated view). */
+    fun setGlInk(on: Boolean): com.xnotes.canvas.GlInkHost? {
+        if ((glInk != null) == on) return glInk
+        if (on && state.rotationDeg != 0) return null
         if (on) {
             val host = com.xnotes.canvas.GlInkHost(view.context, state, view) { controller.frontInk?.holding(it) == true }
             surfaces.addView(host.glView, 0, android.widget.FrameLayout.LayoutParams(-1, -1))
@@ -4106,7 +4107,17 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             }
             glInk = null
         }
-        android.widget.Toast.makeText(view.context, if (on) "GL ink: on" else "GL ink: off", android.widget.Toast.LENGTH_SHORT).show()
+        return glInk
+    }
+
+    private fun toggleGlInk() {
+        val wasOn = glInk != null
+        if (!wasOn && state.rotationDeg != 0) {
+            android.widget.Toast.makeText(view.context, "GL ink needs an upright view", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        setGlInk(!wasOn)
+        android.widget.Toast.makeText(view.context, if (!wasOn) "GL ink: on" else "GL ink: off", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {

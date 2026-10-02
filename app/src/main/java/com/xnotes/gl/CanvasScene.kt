@@ -240,6 +240,12 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
 
     /** Text-box counters for the debug HUD: filed ever, drawn last frame, textures requested. */
     @Volatile var textFiled = 0
+
+    /** What the last frame drew, by kind, and how many records the scene holds; for the bench. */
+    @Volatile var visibleVectors = 0
+    @Volatile var visibleImages = 0
+    @Volatile var visibleTexts = 0
+    @Volatile var recordCount = 0
     @Volatile var textDrawnLast = 0
     @Volatile var textRequested = 0
     private var textDrawnNow = 0
@@ -400,6 +406,10 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
 
         collectVisible(frame)
         lastVisibleItems = visible.size
+        var nv = 0; var ni = 0; var nt = 0
+        for (rec in visible) { if (rec.image != null) ni++ else if (rec.textItem != null) nt++ else nv++ }
+        visibleVectors = nv; visibleImages = ni; visibleTexts = nt
+        recordCount = records.size
         lastDrawCalls = 0
 
         // Halos of everything already committed go into a layer that is rebuilt only when the view

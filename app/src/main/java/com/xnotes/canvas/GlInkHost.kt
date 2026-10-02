@@ -248,6 +248,22 @@ class GlInkHost(
         }
     }
 
+    /** Snapshot of what GL holds and drew, for the bench's smoke test. */
+    class Counts(
+        val records: Int, val vectors: Int, val images: Int, val texts: Int,
+        val textFiled: Int, val textTextures: Int, val textAsked: Int, val textRenders: Int, val textFailures: Int,
+        val lastError: String,
+    ) {
+        override fun toString() =
+            "records=$records vec=$vectors img=$images txt=$texts txtFiled=$textFiled txtTex=$textTextures " +
+                "asked=$textAsked rend=$textRenders fail=$textFailures$lastError"
+    }
+
+    fun counts() = Counts(
+        scene.recordCount, scene.visibleVectors, scene.visibleImages, scene.visibleTexts,
+        scene.textFiled, scene.textLayer.textureCount, scene.textRequested, textRenders, textFailures, lastTextError,
+    )
+
     private var textRenders = 0
     private var textFailures = 0
     private var lastTextError = ""

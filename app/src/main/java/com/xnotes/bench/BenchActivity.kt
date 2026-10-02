@@ -112,6 +112,7 @@ class BenchActivity : ComponentActivity() {
         button("Run decision") { startDecision() }
         button("Run heap") { startHeap() }
         button("Check my notes") { pickNotes.launch(null) }
+        button("GL paged smoke test") { startGlSmoke() }
         button("Copy report") { copyReport() }
         button("Save JSON") { saveJson() }
         panel.addView(row)
@@ -978,6 +979,147 @@ class BenchActivity : ComponentActivity() {
     // --- Memory investigation: where does the GL canvas's process memory go ---
 
     /** Round-trips every .xnote and .xcanvas under [tree] through the unified .xdoc format, writing nothing to it. */
+    private fun startGlSmoke() {
+        if (job?.isActive == true) return
+        text.setLength(0)
+        reportView.text = ""
+        beginAutosave()
+        job = scope.launch {
+            panel.visibility = View.INVISIBLE
+            try {
+                glSmoke()
+            } catch (t: Throwable) {
+                line("FAILED: ${t.stackTraceToString().take(900)}")
+            }
+            panel.visibility = View.VISIBLE
+            line("done")
+        }
+    }
+
+    /** End-to-end check of GL ink on paged notes: every item type, the text-tool and ruler routes, select, delete, undo, pages. */
+    private suspend fun glSmoke() {
+        line("--- GL paged smoke test ---")
+        results.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
+        val rows = JSONArray()
+        results.put("gl_smoke", rows)
+        var failed = 0
+        fun row(step: String, ok: Boolean, detail: String) {
+            if (!ok) failed++
+            rows.put(JSONObject().put("step", step).put("ok", ok).put("detail", detail))
+            line("${if (ok) "PASS" else "FAIL"}  $step  $detail")
+        }
+        val ed = paged ?: Editor(this).also { paged = it }
+        mount(ed.surfaces)
+        val st = ed.state
+        val doc = withContext(Dispatchers.Default) { BenchData.pagedDocument(300, perPage = 100) }
+        st.document = doc
+        st.invalidateAllCaches()
+        st.relayout()
+        st.fitWidth()
+        awaitFrame()
+        val host = ed.setGlInk(true)
+        if (host == null) { row("GL ink on", false, "host not created"); return }
+        suspend fun settle() { delay(900); awaitFrame() }
+        settle()
+        settle()
+        fun c() = host.counts()
+        row("GL ink on", st.glBridge != null && ed.view.glMode, c().toString())
+        row("strokes drawn", c().vectors > 0, "vectors visible ${c().vectors}")
+
+        val page = st.document.pages[0]
+        val pt = com.xnotes.core.geometry.Pt(60.0, 60.0)
+
+        // 1. text the way the text tool makes it
+        var before = c()
+        val n0 = page.items.size
+        ed.controller.debugCreateText(0, pt, "text tool box")
+        settle()
+        var after = c()
+        row("text tool: box added to page", page.items.size == n0 + 1, "items $n0 -> ${page.items.size}")
+        row("text tool: filed in GL", after.textFiled > before.textFiled, "filed ${before.textFiled} -> ${after.textFiled}")
+        row("text tool: texture made", after.textTextures > before.textTextures && after.textFailures == 0, after.toString())
+        row("text tool: drawn", after.texts > before.texts, "text quads ${before.texts} -> ${after.texts}")
+
+        // 2. text the way the ruler saves a reading
+        before = c()
+        val ruler = com.xnotes.core.model.TextItem(
+            com.xnotes.core.geometry.Pt(60.0, 220.0), 300.0, 0.0, "ruler box",
+            com.xnotes.core.model.TextItem.DEFAULT_COLOR, 13.0, com.xnotes.core.pal.FontFace.MONO,
+            com.xnotes.platform.AndroidTextMeasurer(),
+        )
+        page.items.add(ruler)
+        st.appendToCache(page, ruler)
+        settle()
+        after = c()
+        row("ruler text: drawn", after.texts > before.texts, "text quads ${before.texts} -> ${after.texts}; ${after}")
+
+        // 3. an image
+        before = c()
+        val png = java.io.ByteArrayOutputStream().also { out ->
+            val bmp = android.graphics.Bitmap.createBitmap(96, 96, android.graphics.Bitmap.Config.ARGB_8888)
+            android.graphics.Canvas(bmp).drawColor(android.graphics.Color.rgb(200, 60, 60))
+            bmp.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+        }.toByteArray()
+        val nImg = page.items.size
+        ed.insertImageAt(png, st.fromPageSpace(0, com.xnotes.core.geometry.Pt(200.0, 400.0)))
+        settle()
+        after = c()
+        row("image: added to page", page.items.size > nImg, "items $nImg -> ${page.items.size}")
+        row("image: drawn", after.images > before.images, "image quads ${before.images} -> ${after.images}")
+
+        // 4. select all, then clear: lifted items must come back to GL
+        val full = c()
+        ed.controller.selectAll()
+        settle()
+        val lifted = c()
+        line("      selected: vec ${full.vectors}->${lifted.vectors} img ${full.images}->${lifted.images} txt ${full.texts}->${lifted.texts}")
+        ed.controller.clearSelection()
+        settle()
+        after = c()
+        row("select then clear: everything back", after.vectors >= full.vectors && after.images >= full.images && after.texts >= full.texts,
+            "vec ${after.vectors}/${full.vectors} img ${after.images}/${full.images} txt ${after.texts}/${full.texts}")
+
+        // 5. delete the selection, undo it
+        ed.controller.selectAll()
+        settle()
+        ed.controller.deleteSelection()
+        settle()
+        val gone = c()
+        row("delete: page emptied and GL follows", page.items.isEmpty() && gone.vectors + gone.images + gone.texts < full.vectors + full.images + full.texts,
+            "items ${page.items.size}, drawn vec ${gone.vectors} img ${gone.images} txt ${gone.texts}")
+        ed.undo()
+        settle()
+        after = c()
+        row("undo: back in GL", page.items.isNotEmpty() && after.vectors >= full.vectors && after.texts >= full.texts,
+            "items ${page.items.size}, vec ${after.vectors} img ${after.images} txt ${after.texts}")
+
+        // 6. pages
+        val pages0 = st.document.pages.size
+        ed.insertPageAfter(0)
+        settle()
+        row("page added", st.document.pages.size == pages0 + 1 && c().vectors + c().texts > 0, c().toString())
+        ed.deletePages(listOf(1))
+        settle()
+        row("page deleted", st.document.pages.size == pages0 && c().vectors > 0, c().toString())
+
+        // 7. off and on again
+        ed.setGlInk(false)
+        awaitFrame()
+        row("GL off", st.glBridge == null && !ed.view.glMode, "")
+        val host2 = ed.setGlInk(true)
+        settle()
+        settle()
+        val back = host2?.counts()
+        row("GL on again", back != null && back.vectors > 0 && back.texts > 0, back?.toString() ?: "no host")
+
+        ed.setGlInk(false)
+        st.document = Document.blank()
+        st.invalidateAllCaches()
+        st.relayout()
+        results.put("gl_smoke_failed", failed)
+        line(if (failed == 0) "ALL PASSED" else "$failed FAILED")
+    }
+
     private fun startNoteCheck(tree: android.net.Uri) {
         if (job?.isActive == true) return
         text.setLength(0)

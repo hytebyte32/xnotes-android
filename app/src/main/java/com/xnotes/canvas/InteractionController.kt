@@ -1941,6 +1941,15 @@ class InteractionController(
         requestRender()
     }
 
+    /** Bench only: make a text box the way the text tool does (start, type, commit), without touch events. */
+    fun debugCreateText(pageIndex: Int, at: Pt, text: String) {
+        val page = state.document.pages.getOrNull(pageIndex) ?: return
+        val w = defaultTextWidth(state.footprint(page).right, at.x)
+        startEditing(newTextItem(at, w, 0.0), pageIndex, isNew = true)
+        updateEditingText(text)
+        commitTextEdit(text)
+    }
+
     /** Keep the model in sync with the live editor field (for auto-grow / commit). */
     fun updateEditingText(text: String) {
         editingText?.text = text
