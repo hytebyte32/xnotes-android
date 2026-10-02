@@ -48,7 +48,7 @@ class GlInkHost(
     private val scene = CanvasScene()
     private val paged = PagedScene(scene)
     private val sync = PagedInkSync(CanvasSceneSink(scene)) { item ->
-        if (state.isLiftedItem(item) || held(item)) null else ItemMesher.mesh(item)
+        if (state.isLiftedItem(item) || held(item)) null else ItemMesher.mesh(item, simplify = 0.0)
     }
 
     private val main = Handler(Looper.getMainLooper())

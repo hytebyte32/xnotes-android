@@ -89,7 +89,8 @@ object StrokeTessellator {
         g: RibbonPoints,
         tolerance: Double = DEFAULT_TOLERANCE,
         widthScale: Double = 1.0,
-    ): MeshData = tessellate(g, 0, g.pointCount, tolerance, widthScale)
+        simplify: Double = Tuning.effectiveSimplify(),
+    ): MeshData = tessellate(g, 0, g.pointCount, tolerance, widthScale, simplify)
 
     /**
      * [tessellate] over the [count] points starting at [from]. A stroke still under the pen is
@@ -106,6 +107,7 @@ object StrokeTessellator {
         count: Int,
         tolerance: Double,
         widthScale: Double = 1.0,
+        simplify: Double = Tuning.effectiveSimplify(),
     ): MeshData {
         if (count <= 0) return MeshData.EMPTY
         val end = from + count
@@ -119,7 +121,7 @@ object StrokeTessellator {
         if (!g.hasRails) return b.build() // geometry without rails: nothing to draw
 
         // Optional simplification: drop samples the line does not need. Endpoints always stay.
-        val simplify = Tuning.effectiveSimplify()
+
         val keep = if (simplify > 0.0 && count > 2) keptPoints(g, from, end, simplify) else null
         val n = keep?.size ?: count
         fun pt(k: Int): Int = if (keep != null) keep[k] else from + k

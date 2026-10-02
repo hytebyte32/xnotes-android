@@ -96,18 +96,23 @@ class MeshedItem(
  */
 object ItemMesher {
 
-    fun mesh(item: CanvasItem, tolerance: Double = StrokeTessellator.DEFAULT_TOLERANCE): MeshedItem? =
+    fun mesh(
+        item: CanvasItem,
+        tolerance: Double = StrokeTessellator.DEFAULT_TOLERANCE,
+        /** Centreline simplification in content px; the paged view passes 0, as its ink is already reduced at pen-up. */
+        simplify: Double = Tuning.effectiveSimplify(),
+    ): MeshedItem? =
         when (item) {
-            is Stroke -> meshStroke(item, tolerance)
+            is Stroke -> meshStroke(item, tolerance, simplify)
             is ShapeItem -> meshShape(item, tolerance)
             is LabelItem -> meshLabel(item, tolerance)
             else -> null // images carry a texture rather than a colour, and take their own path
         }
 
-    private fun meshStroke(stroke: Stroke, tolerance: Double): MeshedItem? {
+    private fun meshStroke(stroke: Stroke, tolerance: Double, simplify: Double): MeshedItem? {
         if (stroke.isEmpty) return null
         if (stroke.tool == Tool.DASHED) return meshDashed(stroke, tolerance)
-        val mesh = StrokeTessellator.tessellate(stroke.geometry(), tolerance)
+        val mesh = StrokeTessellator.tessellate(stroke.geometry(), tolerance, simplify = simplify)
         if (mesh.isEmpty) return null
         if (stroke.config.neon && stroke.tool != Tool.HIGHLIGHTER) {
             return neonStroke(stroke, mesh, tolerance)
