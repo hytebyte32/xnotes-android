@@ -117,3 +117,55 @@ class PenSynth(private val target: View) {
     fun move(x: Float, y: Float): Long = send(MotionEvent.ACTION_MOVE, x, y)
     fun up(x: Float, y: Float): Long = send(MotionEvent.ACTION_UP, x, y)
 }
+
+/**
+ * The OS's own account of where this process's memory is, for finding what a PSS number is made of:
+ * the summary buckets (java heap, native heap, graphics, private other, system), the anon / file /
+ * shared split from smaps_rollup, and the biggest mappings by name (the GPU driver, the shared-memory
+ * geometry mirrors, the malloc arenas) summed over /proc/self/smaps. Megabytes throughout.
+ */
+fun memoryBreakdown(): JSONObject {
+    val o = JSONObject()
+    val mi = Debug.MemoryInfo()
+    Debug.getMemoryInfo(mi)
+    val summary = JSONObject()
+    for ((k, v) in mi.memoryStats) summary.put(k.removePrefix("summary."), (v.toLongOrNull() ?: 0L) / 1024)
+    o.put("summary_mb", summary)
+    o.put("total_pss_mb", mi.totalPss / 1024)
+    val rt = Runtime.getRuntime()
+    o.put("java_used_mb", (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024))
+    o.put("native_alloc_mb", Debug.getNativeHeapAllocatedSize() / (1024 * 1024))
+    try {
+        val roll = JSONObject()
+        java.io.File("/proc/self/smaps_rollup").forEachLine { l ->
+            for (key in listOf("Rss", "Pss", "Pss_Anon", "Pss_File", "Pss_Shmem")) {
+                if (l.startsWith("$key:")) roll.put(key.lowercase() + "_mb", l.filter { it.isDigit() }.toLong() / 1024)
+            }
+        }
+        o.put("rollup", roll)
+    } catch (_: Throwable) {
+    }
+    try {
+        val header = Regex("^[0-9a-f]+-[0-9a-f]+ [rwxps-]{4} \\S+ \\S+ \\S+\\s*(.*)$")
+        val byName = HashMap<String, Long>()
+        var name = ""
+        java.io.File("/proc/self/smaps").bufferedReader().useLines { lines ->
+            for (l in lines) {
+                val m = header.matchEntire(l)
+                if (m != null) {
+                    name = m.groupValues[1].trim().removeSuffix("(deleted)").trim().ifEmpty { "[anon]" }
+                } else if (l.startsWith("Pss:")) {
+                    byName.merge(name, l.filter { it.isDigit() }.toLong(), Long::plus)
+                }
+            }
+        }
+        val top = org.json.JSONArray()
+        for ((n, kb) in byName.entries.sortedByDescending { it.value }.take(10)) {
+            top.put(JSONObject().put("mapping", n).put("pss_mb", kb / 1024))
+        }
+        o.put("top_mappings", top)
+    } catch (t: Throwable) {
+        o.put("smaps_error", t.toString())
+    }
+    return o
+}
