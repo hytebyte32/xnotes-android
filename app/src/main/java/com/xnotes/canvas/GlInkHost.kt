@@ -105,7 +105,6 @@ class GlInkHost(
         state.glBridge = this
         view.glCamera = ::camera
         view.glAfterFrame = { once -> glView.afterFrame { main.post(once) } }
-        view.glMode = true
         rebuildAll()
     }
 
@@ -116,7 +115,6 @@ class GlInkHost(
         state.glBridge = null
         view.glCamera = null
         view.glAfterFrame = null
-        view.glMode = false
         main.removeCallbacks(zoomSettle)
         state.invalidateAllCaches()
     }

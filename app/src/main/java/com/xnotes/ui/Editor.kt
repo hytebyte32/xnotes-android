@@ -4085,7 +4085,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         onViewSettingsChanged(prev, resolved)
     }
 
-    /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
     /** The GL ink host: paged notes always draw through it. */
     private val glInk: com.xnotes.canvas.GlInkHost? = com.xnotes.canvas.GlInkHost(view.context, state, view) { controller.frontInk?.holding(it) == true }.also { host ->
         surfaces.addView(host.glView, 0, android.widget.FrameLayout.LayoutParams(-1, -1))
@@ -4095,6 +4094,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     /** The GL ink host, for the bench. */
     val glInkHost: com.xnotes.canvas.GlInkHost get() = checkNotNull(glInk) { "GL ink host not created yet" }
 
+    /** Push a settings change into the canvas; each View-menu feature reacts here. */
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
         if (prev.mode != new.mode || prev.rotation != new.rotation || prev.verticalScroll != new.verticalScroll) {
             // Re-group / re-orient / re-flow the pages, keep the reader on the same page, and
@@ -4113,7 +4113,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
                     state.fitWidthActive -> state.zoom = state.fitWidthZoom()
                     state.fitHeightActive -> state.fitHeightZoom().takeIf { it > 0.0 }?.let { state.zoom = it }
                 }
-                state.invalidateCachesForZoom()
                 state.goToPage(cur)
                 refreshView()
             }

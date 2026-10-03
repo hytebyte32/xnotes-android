@@ -85,20 +85,14 @@ class DebugOverlay {
     fun draw(r: AndroidRenderer, state: CanvasState) {
         if (!enabled) return
         sampleMemory(System.nanoTime())
-        val snap = state.cacheSnapshot()
+        val visiblePages = state.visiblePageRange()?.let { it.last - it.first + 1 } ?: 0
         val rt = Runtime.getRuntime()
         val heapUsedMb = (rt.totalMemory() - rt.freeMemory()) / MB
         val heapMaxMb = rt.maxMemory() / MB
 
-        val (rw, rh) = state.targetRasterSize()
-        val res = if (rw > 0) "$rw x $rh" else "-"
         val lines = buildList {
             add("%.0f fps   %.1f ms".format(fps, frameMs))
-            add("cache res  $res")
-            add("visible    ${snap.visiblePages} pg")
-            add("ink cache  ${snap.inkPages} pg")
-            add("bg  cache  ${snap.bgPages} pg")
-            add("cache mem  %.1f MB".format(snap.bytes / MB))
+            add("visible    $visiblePages pg")
             add("heap  %.0f / %.0f MB".format(heapUsedMb, heapMaxMb))
             add("pss    %.0f MB".format(pssMb))
             add("native %.0f MB".format(nativeMb))

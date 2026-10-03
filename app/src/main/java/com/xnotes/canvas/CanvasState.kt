@@ -13,11 +13,8 @@ import com.xnotes.core.model.Stroke
 import com.xnotes.core.model.insets
 import com.xnotes.core.model.resolvedPageColor
 import com.xnotes.core.model.resolvedTemplate
-import com.xnotes.core.pal.Pen
-import com.xnotes.core.pal.RasterSurface
 import com.xnotes.core.pal.Renderer
 import com.xnotes.core.pal.SurfaceFactory
-import com.xnotes.core.stroke.StrokeGeometry
 import com.xnotes.core.tools.Tool
 import com.xnotes.ui.theme.Palette
 import kotlin.math.abs
@@ -33,27 +30,6 @@ import kotlin.math.min
  */
 internal fun CanvasItem.isHighlighterInk(): Boolean =
     (this is Stroke && this.tool == Tool.HIGHLIGHTER) || (this is com.xnotes.core.model.ShapeItem && this.isHighlighter)
-
-/**
- * A rasterized page cache plus the resolution it was built at and the page-space rect it covers
- * (the page's footprint at build time). A margin edit moves that rect, so the entry is rebuilt on a
- * mismatch — and blitted stretched into the new one meanwhile, like a stale-resolution entry is
- * during a pinch.
- */
-class CacheEntry(val surface: RasterSurface, val res: Double, val cover: Rect = Rect(0.0, 0.0, 0.0, 0.0))
-
-/**
- * A cached highlighter ribbon: its opaque bitmap, the resolution + geometry + opaque colour it
- * was built from (any of which changing rebuilds it), and the page-local content rect it covers
- * (where the frame blits it). See [CanvasState.highlighterCacheFor].
- */
-class HighlighterCacheEntry(
-    val surface: RasterSurface,
-    val res: Double,
-    val geom: StrokeGeometry,
-    val opaque: Rgba,
-    val cover: Rect,
-)
 
 /** How a freshly opened document's initial view is chosen (see [CanvasState.establishInitialView]). */
 sealed class InitialView {
@@ -323,19 +299,18 @@ class CanvasState(
     /** Like [fitWidthActive] but for the paginated fit-to-height magnet ([fitHeightZoom]). */
     var fitHeightActive: Boolean = false
 
-    /** Items excluded from the cache (lifted for selection/editing); set by the interaction layer. */
-    /** Set while GL draws the ink and page underlays: the Skia caches are not built and changes are reported here instead. */
+    /** The GL host that draws the ink and page underlays; every model change is reported to it. */
     var glBridge: GlInkBridge? = null
 
-    /** Resolution a page underlay should be rendered at for the current zoom, capped as the Skia caches are. */
+    /** Resolution a page underlay should be rendered at for the current zoom, capped at [maxCachePx]. */
     fun underlayRes(page: Page): Double = clampedRes(page)
 
+    /** Items GL must not draw (lifted for selection/editing); set by the interaction layer. */
     var isLiftedItem: (CanvasItem) -> Boolean = { false }
 
     /**
      * Optional page-background painter (PDF / template). [region] is the page-local content rect
-     * to render — the whole page for the page cache/thumbnails, or just the visible sub-rect for
-     * the sharp viewport — so the painter can rasterize only that slice at full resolution.
+     * to render — the whole page footprint for an underlay texture or a thumbnail.
      */
     var paintPageBackground: ((page: Page, renderer: Renderer, res: Double, region: Rect) -> Unit)? = null
 
@@ -343,7 +318,7 @@ class CanvasState(
      * Optional flow-text painter (the document-wide typed text). It paints onto the
      * transparent ink layer *before* the page items, so ink annotates over text while
      * text sits over the page background. [region] is the page-local rect being
-     * painted, like [paintPageBackground]. Runs on cache threads: the installed hook
+     * painted, like [paintPageBackground]. Runs off the UI thread: the installed hook
      * must read only an immutable published layout snapshot, never the live model.
      */
     var paintFlow: ((page: Page, renderer: Renderer, region: Rect) -> Unit)? = null
@@ -352,117 +327,10 @@ class CanvasState(
     var flowOnPage: ((Page) -> Boolean)? = null
 
     /**
-     * True while a flow-text caret session is live: screen ink caches build WITHOUT
-     * the flow and [CanvasView] paints it immediate-mode each frame instead, so a
-     * keystroke never waits for a cache rebuild. Session start/end must invalidate
-     * the flow-bearing pages so the layers swap cleanly.
+     * True while a flow-text caret session is live: the flow is painted live by the
+     * editor instead of baked into a layer, so a keystroke never waits for a rebuild.
      */
     var flowLifted: Boolean = false
-
-    /**
-     * Per-page caches, split into two layers so an ink edit never re-rasterizes the
-     * (costly) page background: [caches] holds the transparent **ink** layer (the
-     * strokes/shapes/text), [bgCaches] holds the rendered **background** layer
-     * (PDF/template) and stays empty when there is none. Both are blitted — background
-     * then ink — over the paper fill. Surfaces are intentionally **not** recycled on
-     * eviction; GC reclaims them once nothing holds them. Both maps are touched only on
-     * the main thread.
-     */
-    private val caches = HashMap<Page, CacheEntry>()
-    private val bgCaches = HashMap<Page, CacheEntry>()
-
-    /**
-     * Per-highlighter opaque-ribbon bitmaps. Highlighters can't be baked into [caches] (they
-     * MULTIPLY against the live page, not the transparent ink layer above it), so the draw loop
-     * composites them every frame — but re-tessellating a self-overlapping ribbon each frame stalls
-     * scrolling. Each entry holds the stroke's ribbon rendered once at full opacity; the frame just
-     * blits it with the stroke's alpha + MULTIPLY (see [highlighterCacheFor] and [CanvasView]). Keyed
-     * by stroke identity (model items compare by identity); rebuilt when the stroke's geometry
-     * instance changes (any edit nulls it), its colour changes, or the resolution moves. Touched on
-     * the main thread only and pruned to the visible pages' highlighters each frame.
-     */
-    private val hlCaches = HashMap<Stroke, HighlighterCacheEntry>()
-
-    /**
-     * Pages whose strokes have built ribbon geometry ([Stroke.geometry]), so eviction can walk only
-     * the pages that leave the band instead of the whole document every frame.
-     *
-     * Geometry is only ever built as a side effect of rasterizing a page, so its lifetime tracks the
-     * page cache's: a stroke holds its ribbon exactly while its page holds a raster. Left unbounded
-     * it is the second biggest thing in a dense note (54 MB on a 27-page file, ~30 bytes per sample)
-     * and it never came back, because nothing dropped it on scroll.
-     */
-    private val geomPages = HashSet<Page>()
-
-    /**
-     * Off-UI-thread plumbing for the *non-blocking* cache path ([cacheForOrSchedule] /
-     * [backgroundForOrSchedule]). The canvas calls those from `onDraw`; when a freshly
-     * scrolled-in page has no current-resolution cache yet, the heavy rasterization runs
-     * on [runAsync] (a background thread) and the finished surface is published back on
-     * [postToMain], which then asks for a repaint via [onCacheReady]. This keeps the
-     * scroll frame from stalling while a new page is rasterized — the page just appears a
-     * frame or two later. The defaults run inline so unit tests stay synchronous.
-     */
-    var runAsync: (work: () -> Unit) -> Unit = { it() }
-    var postToMain: (work: () -> Unit) -> Unit = { it() }
-    var onCacheReady: (() -> Unit)? = null
-
-    /** Pages with a build in flight, so we never queue the same page twice. */
-    private val pendingInk = HashSet<Page>()
-    private val pendingBg = HashSet<Page>()
-
-    /**
-     * Pages whose cached ink is known to be out of date and is being rebuilt off-thread (see
-     * [refreshAllInk]). The surface stays in [caches] and keeps being blitted meanwhile, so the page
-     * shows its pre-edit content for a frame or two rather than blanking; the flag is what makes
-     * [usableFor] say no, since an edit leaves the entry's cover and resolution both matching.
-     */
-    private val staleInk = HashSet<Page>()
-
-    /**
-     * Bumped by every cache invalidation. An in-flight async build captures the value at
-     * schedule time and its result is discarded if the generation has since moved on, so
-     * an edit (or zoom) that lands mid-build never gets overwritten by the stale surface.
-     */
-    private var cacheGen = 0
-
-    // --- sharp viewport (past the resolution cap) ---
-
-    // Two layers, like the page cache, so an erase can clear ink in a region without
-    // disturbing the (PDF/paper) background underneath: [base] holds window bg + paper +
-    // border + background + labels, [ink] holds just the strokes on a transparent surface.
-    private class SharpFrame(
-        val base: RasterSurface,
-        val ink: RasterSurface,
-        val sx: Double,
-        val sy: Double,
-        val z: Double,
-        val gen: Int,
-        /** Buffer (surface px) the frame extends past the viewport on each side. */
-        val mx: Double = 0.0,
-        val my: Double = 0.0,
-    )
-
-    private var sharpFrame: SharpFrame? = null
-    private var pendingSharp = false
-
-    /**
-     * Edits landed while a sharp render was in flight (its item snapshot predates them):
-     * page + page-local dirty rect, replayed onto the fresh frame at publish so ink drawn
-     * (or erased) during the build doesn't vanish (or reappear) when the sharp layer settles.
-     */
-    private val pendingSharpEdits = ArrayList<Pair<Page, Rect>>()
-
-    /** Bumped on any content/layout change so a stale sharp viewport is discarded. */
-    private var sharpGen = 0
-
-    private class SharpPageSnap(
-        val page: Page,
-        val pr: Rect,
-        val items: List<CanvasItem>,
-        val region: Rect,
-        val index: Int,
-    )
 
     var pageRects: List<Rect> = emptyList()
         private set
@@ -508,7 +376,6 @@ class CanvasState(
     }
 
     fun relayout() {
-        sharpGen++ // page layout / viewport size changed: the sharp viewport must re-render
         val pages = document.pages
         if (pages.isEmpty()) {
             pageRects = emptyList()
@@ -786,7 +653,6 @@ class CanvasState(
         zoom = z
         scrollX = anchor.x * z - focusViewport.x
         scrollY = anchor.y * z - focusViewport.y
-        invalidateCachesForZoom()
         clampScroll()
     }
 
@@ -811,7 +677,6 @@ class CanvasState(
         fitHeightActive = false
         scrollX = anchor.x * z - focus.x
         scrollY = anchor.y * z - focus.y
-        invalidateCachesForZoom()
         clampScroll()
     }
 
@@ -821,7 +686,6 @@ class CanvasState(
         zoom = fitWidthZoom()
         fitWidthActive = true
         fitHeightActive = false
-        invalidateCachesForZoom()
         goToPage(cur)
     }
 
@@ -833,7 +697,6 @@ class CanvasState(
         zoom = if (magnet > 0.0) magnet else ((clearH - 60.0) / displayH(pages[cur])).coerceIn(minZoom, maxZoom)
         fitWidthActive = false
         fitHeightActive = magnet > 0.0
-        invalidateCachesForZoom()
         goToPage(cur)
     }
 
@@ -848,7 +711,6 @@ class CanvasState(
         zoom = min(clearW / w, clearH / h).coerceIn(minZoom, maxZoom)
         fitWidthActive = false
         fitHeightActive = false
-        invalidateCachesForZoom()
         goToPage(cur)
     }
 
@@ -912,7 +774,6 @@ class CanvasState(
             val fit = fitHeightZoom()
             if (fit <= 0.0) return
             zoom = fit
-            invalidateCachesForZoom()
             clampScroll() // the row window recentres/pins for the new zoom
             return
         }
@@ -924,7 +785,6 @@ class CanvasState(
         zoom = fitWidthZoom()
         scrollX = minScrollX()
         scrollY = centerContentY * zoom - center.y
-        invalidateCachesForZoom()
         clampScroll()
     }
 
@@ -945,7 +805,6 @@ class CanvasState(
         val targetH = fitHeightZoom()
         fitHeightActive = targetH > 0.0 && abs(zoom - targetH) <= targetH * SNAP_TO_FIT_WIDTH
         fitWidthActive = !fitHeightActive && targetW > 0.0 && abs(zoom - targetW) <= targetW * SNAP_TO_FIT_WIDTH
-        invalidateCachesForZoom()
         clampScroll()
     }
 
@@ -956,7 +815,6 @@ class CanvasState(
         zoom = fitWidthZoom()
         fitWidthActive = true
         fitHeightActive = false
-        invalidateCachesForZoom()
         goToPage(0)
     }
 
@@ -976,8 +834,11 @@ class CanvasState(
         didInitialFit = true
     }
 
-    // --- page cache ---
+    // --- GL bridge notifications ---
+    // The ink, page underlays and flow text are all drawn by GL; the model's invalidations end here
+    // and are forwarded to the GL host, which re-files and re-renders what changed.
 
+    /** Resolution an underlay bitmap should be rendered at for the current zoom, capped at [maxCachePx]. */
     private fun clampedRes(page: Page): Double {
         var res = zoom * renderScale
         val longEdge = max(outerW(page), outerH(page))
@@ -985,92 +846,101 @@ class CanvasState(
         return res.coerceAtLeast(0.01)
     }
 
-    fun cacheFor(page: Page): CacheEntry {
-        val res = clampedRes(page)
-        caches[page]?.let { if (it.usableFor(page, res)) return it }
-        return buildCache(page, res).also { caches[page] = it; staleInk.remove(page) }
-    }
+    /**
+     * Whether [page] has anything in its background layer — a PDF page or a resolved ruling.
+     * Plain colour pages return false so no (large, transparent) background texture is built, even
+     * though [paintPageBackground] is always installed for the pattern path.
+     */
+    fun hasPageBackground(page: Page): Boolean =
+        paintPageBackground != null && (page.pdfPage != null || effectiveTemplate(page) != PageTemplates.NONE)
 
-    /** Whether this entry still matches [page]'s footprint and the [target] resolution, and holds
-     *  the page's current content ([staleInk]). */
-    private fun CacheEntry.usableFor(page: Page, target: Double): Boolean =
-        page !in staleInk && cover == footprint(page) && (zoomingInProgress || abs(res - target) < 1e-6)
+    /** A single just-committed item was added to [page]. */
+    fun appendToCache(page: Page, item: CanvasItem) {
+        glBridge?.itemAppended(page, item)
+    }
 
     /**
-     * Like [cacheFor] but never rasterizes on the calling (UI) thread: returns the ready
-     * surface when one exists, otherwise schedules the build on [runAsync] and returns the
-     * stale-resolution surface to blit meanwhile (or null when the page has never been
-     * cached, in which case the caller draws bare paper until the build lands).
+     * Report that only [dirtyRect] (page-local content space) of [page] changed, e.g. after the
+     * eraser removed strokes from a small area. Returns false when no GL host is attached, so the
+     * caller can fall back to [invalidatePage].
      */
-    fun cacheForOrSchedule(page: Page): CacheEntry? {
-        val res = clampedRes(page)
-        val existing = caches[page]
-        if (existing != null && existing.usableFor(page, res)) return existing
-        scheduleInk(page, res)
-        // Sync scheduler filled it; async leaves the stale entry (or null). A stale *resolution* is
-        // still blitted (scaled) so a pinch never flashes, but a stale *footprint* is not: stretching
-        // a whole page while a margin slider is dragged reads far worse than bare paper does.
-        return caches[page]?.takeIf { it.cover == footprint(page) }
+    fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
+        val bridge = glBridge ?: return false
+        bridge.inkChanged(page, dirtyRect)
+        return true
     }
 
-    private fun scheduleInk(page: Page, res: Double) {
-        if (!pendingInk.add(page)) return
-        val gen = cacheGen
-        val items = cacheItems(page) // snapshot on the UI thread
-        val withFlow = !flowLifted // snapshot too; the generation guard discards stale builds
-        runAsync {
-            val entry = renderInk(page, res, items, withFlow)
-            postToMain {
-                pendingInk.remove(page)
-                if (gen == cacheGen) {
-                    caches[page] = entry
-                    staleInk.remove(page)
-                }
-                // Repaint either way. A build the page outgrew mid-flight (a margin drag bumps the
-                // generation on every tick) is discarded here, and the draw loop is what schedules
-                // its replacement — but every frame while this one was in flight was turned away by
-                // [pendingInk], so without this the page would sit blank until something else drew.
-                onCacheReady?.invoke()
-            }
+    fun invalidatePage(page: Page) {
+        glBridge?.pageInvalidated(page)
+    }
+
+    /** Paper colour or ruling changed: every page's underlay is out of date. */
+    fun invalidatePaper() {
+        glBridge?.everythingChanged()
+    }
+
+    fun invalidateBackground(page: Page) {
+        glBridge?.backgroundChanged(page)
+    }
+
+    fun invalidateAllBackgrounds() {
+        glBridge?.everythingChanged()
+    }
+
+    /** Page footprints changed (a margin edit). */
+    fun invalidatePageGeometry() {
+        glBridge?.everythingChanged()
+    }
+
+    fun invalidateAllCaches() {
+        glBridge?.everythingChanged()
+    }
+
+    /** Paint the live stroke, inside the page's own transform. */
+    fun paintLiveStroke(r: Renderer, stroke: Stroke) {
+        stroke.paint(r)
+    }
+
+    /** Undo/redo of a command that cannot say what it touched: everything may have changed. */
+    fun refreshAllInk() {
+        glBridge?.everythingChanged()
+    }
+
+    /**
+     * Undo/redo confined to the regions the undone command disturbed (see
+     * [com.xnotes.core.history.Command.touched]). Rects are unioned per page.
+     */
+    fun repairInkRegions(regions: List<Pair<Page, Rect>>) {
+        if (regions.isEmpty()) return
+        val byPage = LinkedHashMap<Page, Rect>()
+        for ((page, rect) in regions) {
+            byPage[page] = byPage[page]?.union(rect) ?: rect
         }
+        for ((page, rect) in byPage) repairRegion(page, rect.outset(EDIT_PAD))
     }
 
-    /** Items baked into a page's ink cache: all but lifted items and highlighters
-     *  ([isHighlighterInk] — those composite live so they MULTIPLY against the background). */
-    private fun cacheItems(page: Page): List<CanvasItem> =
-        page.items.filter { !isLiftedItem(it) && !it.isHighlighterInk() }
-
-    private fun buildCache(page: Page, res: Double): CacheEntry =
-        renderInk(page, res, cacheItems(page), includeFlow = !flowLifted)
-
-    private fun renderInk(page: Page, res: Double, items: List<CanvasItem>, includeFlow: Boolean): CacheEntry {
-        val cover = footprint(page)
-        val w = ceil(cover.w * res).toInt().coerceAtLeast(1)
-        val h = ceil(cover.h * res).toInt().coerceAtLeast(1)
-        val surface = surfaceFactory.create(w, h, 1.0)
-        surface.fill(TRANSPARENT)
-        val r = surface.renderer()
-        r.scale(res, res)
-        r.translate(-cover.left, -cover.top) // the surface covers the margins, so page space starts inset
-        if (includeFlow) paintFlow?.invoke(page, r, cover)
-        for (item in items) item.paint(r)
-        noteGeometryBuilt(page)
-        return CacheEntry(surface, res, cover)
+    /** [page]'s background (e.g. a PDF page whose embedded-image colours just finished parsing) changed. */
+    fun refreshBackground(page: Page) {
+        if (paintPageBackground == null) return
+        glBridge?.backgroundChanged(page)
     }
 
-    /** Record that [page]'s strokes now hold ribbon geometry. Called from the cache threads too, so
-     *  the set is synchronized; it is touched once per page build, never per item. */
+    // --- ribbon geometry lifetime ---
+
+    /**
+     * Pages whose strokes have built ribbon geometry ([Stroke.geometry]), so eviction can walk only
+     * the pages that leave a band instead of the whole document.
+     */
+    private val geomPages = HashSet<Page>()
+
+    /** Record that [page]'s strokes now hold ribbon geometry. May be called from any thread. */
     fun noteGeometryBuilt(page: Page) {
         synchronized(geomPages) { geomPages.add(page) }
     }
 
     /**
-     * Release ribbon geometry for every page outside [keep], and forget it. Only the pages that
-     * actually leave are walked, so a steady scroll pays for one page.
-     *
-     * [Stroke.releaseGeometry] drops the ribbon but keeps the bounds rects: [Stroke.bounds] is built
-     * from the geometry, and band selection reads it across pages it never painted, so discarding it
-     * too would rebuild the whole ribbon just to hand back a rectangle.
+     * Release ribbon geometry for every page outside [keep], and forget it. [Stroke.releaseGeometry]
+     * drops the ribbon but keeps the bounds rects.
      */
     fun releaseGeometryExcept(keep: Set<Page>) {
         synchronized(geomPages) {
@@ -1083,386 +953,6 @@ class CanvasState(
                 it.remove()
             }
         }
-    }
-
-    /**
-     * The cached opaque-ribbon bitmap for highlighter [stroke] on [page], built lazily and reused
-     * until the stroke is edited (its [Stroke.geometry] instance changes), its colour changes, or the
-     * resolution moves — rebuilt on zoom-settle, while mid-pinch the stale-resolution bitmap is
-     * blitted scaled (like the page caches). The caller composites it with the stroke's alpha and
-     * MULTIPLY so it darkens against the live page; see [CanvasView].
-     */
-    fun highlighterCacheFor(stroke: Stroke, page: Page): HighlighterCacheEntry {
-        val res = clampedRes(page)
-        val g = stroke.geometry()
-        val opaque = stroke.renderColor.withAlpha(255)
-        val existing = hlCaches[stroke]
-        if (existing != null && existing.geom === g && existing.opaque == opaque &&
-            (zoomingInProgress || abs(existing.res - res) < 1e-6)
-        ) {
-            return existing
-        }
-        return buildHighlighter(stroke, res, g, opaque).also { hlCaches[stroke] = it }
-    }
-
-    private fun buildHighlighter(stroke: Stroke, res: Double, g: StrokeGeometry, opaque: Rgba): HighlighterCacheEntry {
-        val cover = stroke.bounds().outset(HL_PAD)
-        val w = ceil(cover.w * res).toInt().coerceAtLeast(1)
-        val h = ceil(cover.h * res).toInt().coerceAtLeast(1)
-        val surface = surfaceFactory.create(w, h, 1.0)
-        surface.fill(TRANSPARENT)
-        val r = surface.renderer()
-        r.scale(res, res)
-        r.translate(-cover.left, -cover.top)
-        stroke.paintHighlighterRibbon(r)
-        return HighlighterCacheEntry(surface, res, g, opaque, cover)
-    }
-
-    /**
-     * Whether [page] has anything in its background layer — a PDF page or a resolved ruling.
-     * Plain colour pages return false so no (large, transparent) background surface is allocated,
-     * even though [paintPageBackground] is always installed for the pattern path.
-     */
-    fun hasPageBackground(page: Page): Boolean =
-        paintPageBackground != null && (page.pdfPage != null || effectiveTemplate(page) != PageTemplates.NONE)
-
-    /**
-     * The page's rendered background layer (PDF/template) at the current resolution,
-     * or null when the document has no page background. Built once and reused across
-     * ink edits — rebuilt only when the resolution changes — so erasing/repairing ink
-     * never re-rasterizes the (expensive) background.
-     */
-    fun backgroundFor(page: Page): CacheEntry? {
-        if (!hasPageBackground(page)) return null
-        val res = clampedRes(page)
-        val existing = bgCaches[page]
-        if (existing != null && existing.usableFor(page, res)) return existing
-        return buildBackground(page, res).also { bgCaches[page] = it }
-    }
-
-    /** Non-blocking counterpart to [backgroundFor]; see [cacheForOrSchedule]. */
-    fun backgroundForOrSchedule(page: Page): CacheEntry? {
-        if (!hasPageBackground(page)) return null
-        val res = clampedRes(page)
-        val existing = bgCaches[page]
-        if (existing != null && existing.usableFor(page, res)) return existing
-        scheduleBg(page, res)
-        return bgCaches[page]?.takeIf { it.cover == footprint(page) }
-    }
-
-    private fun scheduleBg(page: Page, res: Double) {
-        if (!pendingBg.add(page)) return
-        val gen = cacheGen
-        runAsync {
-            val entry = buildBackground(page, res)
-            postToMain {
-                pendingBg.remove(page)
-                if (gen == cacheGen) bgCaches[page] = entry
-                onCacheReady?.invoke() // discarded or not; see [scheduleInk]
-            }
-        }
-    }
-
-    private fun buildBackground(page: Page, res: Double): CacheEntry {
-        val cover = footprint(page)
-        val w = ceil(cover.w * res).toInt().coerceAtLeast(1)
-        val h = ceil(cover.h * res).toInt().coerceAtLeast(1)
-        val surface = surfaceFactory.create(w, h, 1.0)
-        surface.fill(TRANSPARENT)
-        val r = surface.renderer()
-        r.scale(res, res)
-        r.translate(-cover.left, -cover.top)
-        paintPageBackground?.invoke(page, r, res, cover)
-        return CacheEntry(surface, res, cover)
-    }
-
-    /** Append a single just-committed stroke into an existing cache (cheap), else rebuild. */
-    fun appendToCache(page: Page, item: CanvasItem) {
-        glBridge?.let { it.itemAppended(page, item); return }
-        if (item.isHighlighterInk()) return // composited live over the page, never cached
-        appendToSharpInk(page, item) // keep the sharp viewport crisp without a full re-render
-        if (pendingSharp) pendingSharpEdits.add(page to item.paintBounds().outset(SHARP_EDIT_PAD))
-        val res = clampedRes(page)
-        val existing = caches[page]
-        if (existing == null || !existing.usableFor(page, res)) {
-            invalidatePage(page)
-            return
-        }
-        val cover = existing.cover
-        val r = existing.surface.renderer()
-        r.scale(res, res)
-        r.translate(-cover.left, -cover.top)
-        item.paint(r)
-    }
-
-    /**
-     * Repair just [dirtyRect] (page-local content space) of [page]'s ink layer in
-     * place, instead of rebuilding the whole page — used after the eraser removes
-     * strokes from a small area. Clears the region and repaints only the surviving
-     * items overlapping it, so the cost scales with the dirty area, not the page. The
-     * separate background layer is untouched, so this works for PDF pages too.
-     *
-     * Returns false when there is no live cache to repair; the caller should then
-     * [invalidatePage] for a full rebuild.
-     */
-    fun repairRegion(page: Page, dirtyRect: Rect): Boolean {
-        glBridge?.let { it.inkChanged(page, dirtyRect); return true }
-        repairSharpInk(page, dirtyRect) // erase from the sharp ink layer in place, no re-render
-        if (pendingSharp) pendingSharpEdits.add(page to dirtyRect)
-        val entry = caches[page] ?: return false
-        val cover = entry.cover
-        val r = entry.surface.renderer()
-        r.save()
-        r.scale(entry.res, entry.res)
-        r.translate(-cover.left, -cover.top)
-        r.clipRect(dirtyRect)
-        r.clear()
-        if (!flowLifted) paintFlow?.invoke(page, r, dirtyRect)
-        for (item in page.items) {
-            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
-        }
-        r.restore()
-        return true
-    }
-
-    fun invalidatePage(page: Page) {
-        caches.remove(page)
-        staleInk.remove(page)
-        cacheGen++
-        sharpGen++
-        glBridge?.pageInvalidated(page)
-    }
-
-    /**
-     * Page-style invalidation. The paper colour is filled **live** each frame in [CanvasView] (not
-     * baked into [caches]/[bgCaches]), so a colour-only change just needs the sharp viewport — which
-     * *does* bake the paper — to re-render: bump [sharpGen]. A ruling, by contrast, lives in the
-     * background cache, so a pattern/spacing/pattern-colour change must drop that page's background
-     * and let the draw loop rebuild via [backgroundForOrSchedule]. Unlike
-     * [refreshBackground] (the PDF-refine path) these do **not** early-return on a missing cache, so a
-     * plain page that *gains* a ruling rebuilds correctly; one that loses it stops drawing a background
-     * (see [hasPageBackground]).
-     */
-    fun invalidatePaper() {
-        sharpGen++
-        glBridge?.everythingChanged()
-    }
-
-    fun invalidateBackground(page: Page) {
-        bgCaches.remove(page)
-        cacheGen++
-        sharpGen++
-        glBridge?.backgroundChanged(page)
-    }
-
-    fun invalidateAllBackgrounds() {
-        bgCaches.clear()
-        cacheGen++
-        sharpGen++
-        glBridge?.everythingChanged()
-    }
-
-    /**
-     * Page footprints changed (a margin edit). The surfaces are kept rather than cleared, but they
-     * are not drawn while they are the wrong size (see [cacheForOrSchedule]) — the page shows bare
-     * paper until its rebuild lands. Keeping them means a slider dragged back to a size already
-     * rasterized shows that page again at once, with nothing to rebuild. The size mismatch itself is
-     * what schedules the rebuild (see [usableFor]).
-     */
-    fun invalidatePageGeometry() {
-        cacheGen++
-        sharpGen++
-        glBridge?.everythingChanged()
-    }
-
-    fun invalidateAllCaches() {
-        caches.clear()
-        staleInk.clear()
-        bgCaches.clear()
-        hlCaches.clear()
-        wetInk.clear()
-        cacheGen++
-        sharpGen++
-        glBridge?.everythingChanged()
-    }
-
-    /**
-     * The settled part of the stroke under the pen, baked into a raster once and blitted after
-     * (see [WetInkCache]). Held here because the surface factory and the render resolution are, and
-     * because one buffer serves every stroke the note ever draws rather than one per stroke.
-     */
-    private val wetInk = WetInkCache(surfaceFactory)
-
-    /**
-     * Paint the live stroke, through the wet cache when it will take it. Called inside the page's
-     * own transform, so everything the cache does is in page space, exactly like the page caches.
-     *
-     * The surface is capped at twice the viewport's pixels: a stroke sweeping a deeply zoomed page
-     * could ask for a buffer many times the screen it is drawn on, and past that cap redrawing the
-     * ribbon is the cheaper of the two.
-     */
-    fun paintLiveStroke(r: Renderer, stroke: Stroke) {
-        val res = (zoom * renderScale).coerceAtLeast(0.01)
-        val cap = 2L * max(viewportW, 1) * max(viewportH, 1)
-        if (!wetInk.paint(r, stroke, res, cap)) stroke.paint(r)
-    }
-
-    /**
-     * Rebuild every live page ink cache **off-thread**: the undo/redo path for a command that can't
-     * say what it touched ([com.xnotes.core.history.Command.touched] returned null), so there are no
-     * regions to repair and the whole page has to be re-rendered. Doing that inline is what timed
-     * out input — a full page of ink is the same work [renderInk] does on the cache thread, times
-     * every cached page, on the thread the tap arrived on.
-     *
-     * So it schedules instead, exactly like [refreshBackground] does for a PDF page: the current
-     * surface stays in [caches] and keeps being blitted until the rebuild lands, so the page shows
-     * its pre-edit content for a frame or two rather than blanking (the flicker [invalidateAllCaches]
-     * caused). [staleInk] is what stops [usableFor] handing that surface back as current — an edit
-     * changes neither the cover nor the resolution, so nothing else would notice.
-     *
-     * Bumps [cacheGen] so a build scheduled before the edit is discarded on publish rather than
-     * overwriting the page with its pre-edit snapshot, and [sharpGen] because the sharp viewport can
-     * only be patched by region ([repairSharpInk]) and there are none: it drops to the soft cache
-     * underneath and re-renders once the view settles. The (PDF/template) background layer is left
-     * untouched — undo/redo never edits it, so it must not flash either.
-     */
-    fun refreshAllInk() {
-        cacheGen++
-        sharpGen++
-        for (page in caches.keys.toList()) {
-            staleInk.add(page)
-            scheduleInk(page, clampedRes(page))
-        }
-    }
-
-    /**
-     * The in-place undo/redo repair, confined to the regions the
-     * undone command actually disturbed (see [com.xnotes.core.history.Command.touched]) — surfaces
-     * kept, background layer untouched, sharp viewport patched, minus the full-page re-rasterization
-     * of every cached page that made a single undo tap cost the whole visible band. Rects are unioned
-     * per page, so each page is repainted at most once — and the sharp viewport is patched rather
-     * than dropped, which is what keeps a deep zoom crisp across an undo. A page with no live cache
-     * has nothing to repair and falls out of [repairRegion] on its own, having still patched the
-     * sharp layer. The unbounded fallback is [refreshAllInk].
-     */
-    fun repairInkRegions(regions: List<Pair<Page, Rect>>) {
-        if (regions.isNotEmpty()) {
-            val byPage = LinkedHashMap<Page, Rect>()
-            for ((page, rect) in regions) {
-                byPage[page] = byPage[page]?.union(rect) ?: rect
-            }
-            for ((page, rect) in byPage) repairRegion(page, rect.outset(SHARP_EDIT_PAD))
-        }
-        cacheGen++
-    }
-
-    /**
-     * Re-render only [page]'s background layer (e.g. a PDF page whose embedded-image colours just
-     * finished parsing), swapping the refreshed surface in when it's ready and leaving the current
-     * one on screen until then so the page never blanks. Unlike a global background flush this
-     * touches *only* [page]: other pages' cached backgrounds and in-flight builds are left intact,
-     * so refining one page never re-rasterizes — or flickers — the rest of the visible pages.
-     *
-     * Skips pages with no live background cache (off-screen now): they render stamped on their own
-     * when next scrolled into view. The rebuild is scheduled at the current generation, so on the
-     * single-threaded cache executor it lands after the (already-published) provisional build and
-     * its stamped surface wins.
-     */
-    fun refreshBackground(page: Page) {
-        if (paintPageBackground == null) return
-        if (!bgCaches.containsKey(page)) return
-        sharpGen++ // also refine the sharp viewport if it's covering this page (deep zoom)
-        scheduleBg(page, clampedRes(page))
-    }
-
-    /**
-     * Invalidate caches after a *zoom* without dropping the surfaces. The old-resolution
-     * bitmaps stay in the maps, so [cacheForOrSchedule]/[backgroundForOrSchedule] keep
-     * blitting them (scaled) for the new zoom until the sharp rebuild lands — avoiding the
-     * one-frame empty-canvas flash that clearing would cause when a pinch ends. A page whose
-     * clamped resolution is unchanged (already at the [maxCachePx] cap) matches on res and
-     * is returned as-is, so it is neither flashed nor needlessly rebuilt.
-     *
-     * Bumping [cacheGen] discards any in-flight build captured at the previous generation, so
-     * a stale-resolution surface can't be published over the maps after the zoom changed. Use
-     * [invalidateAllCaches] instead when page *content* changed — that must rebuild even at the
-     * same resolution.
-     */
-    fun invalidateCachesForZoom() {
-        cacheGen++
-    }
-
-    fun dropCachesExcept(visible: Set<Page>) {
-        caches.keys.retainAll(visible)
-        staleInk.retainAll(visible)
-        bgCaches.keys.retainAll(visible)
-        if (hlCaches.isNotEmpty()) {
-            val keep = HashSet<Stroke>()
-            for (p in visible) for (it in p.items) if (it is Stroke && it.tool == Tool.HIGHLIGHTER) keep.add(it)
-            hlCaches.keys.retainAll(keep)
-        }
-        releaseGeometryExcept(visible)
-    }
-
-    /** Pages to build ahead of the viewport ([prefetch], nearest first) and pages whose caches survive the frame ([keep]). */
-    class CacheBand(val prefetch: List<Page>, val keep: Set<Page>)
-
-    /**
-     * Rows within a screenful of the viewport (at least the adjacent one; paginated, one row either side), kept one
-     * row further. Never sized by the visible page count: that flips as page edges cross the viewport, and every
-     * flip evicted the pages just prefetched.
-     */
-    fun cacheBand(): CacheBand {
-        val pages = document.pages
-        val rows = rowRanges()
-        if (rows.isEmpty()) return CacheBand(emptyList(), emptySet())
-        if (pageRects.size != pages.size) return CacheBand(emptyList(), pages.toHashSet()) // not laid out yet
-        // Rows on screen are first..last (last = first - 1 when the view sits in a gap); lo..hi adds the prefetch.
-        var first: Int
-        var last: Int
-        var lo: Int
-        var hi: Int
-        if (verticalScroll) {
-            val v = visibleContentRect()
-            fun top(r: Int) = rows[r].minOf { pageRects[it].top }
-            fun bottom(r: Int) = rows[r].maxOf { pageRects[it].bottom }
-            first = 0
-            while (first < rows.size && bottom(first) < v.top) first++
-            last = rows.lastIndex
-            while (last >= 0 && top(last) > v.bottom) last--
-            hi = last + 1
-            while (hi < rows.lastIndex && top(hi + 1) <= v.bottom + v.h) hi++
-            lo = first - 1
-            while (lo > 0 && bottom(lo - 1) >= v.top - v.h) lo--
-        } else {
-            first = currentRow.coerceIn(0, rows.lastIndex)
-            last = first
-            lo = first - 1
-            hi = first + 1
-        }
-        val prefetch = ArrayList<Page>()
-        for (r in first..last) for (i in rows[r]) prefetch += pages[i]
-        for (d in 1..max(hi - last, first - lo)) {
-            for (r in intArrayOf(last + d, first - d)) {
-                if (r in lo..hi && r in rows.indices) for (i in rows[r]) prefetch += pages[i]
-            }
-        }
-        val keep = HashSet<Page>()
-        for (r in max(lo - 1, 0)..min(hi + 1, rows.lastIndex)) for (i in rows[r]) keep += pages[i]
-        return CacheBand(prefetch, keep)
-    }
-
-    /** Runs after the visible pages are scheduled, so they build first; a pinch moving the zoom keeps the band but prefetches nothing. */
-    fun prefetchAndPrune() {
-        if (glBridge != null) return
-        val band = cacheBand()
-        if (!zoomingInProgress) {
-            for (page in band.prefetch) {
-                backgroundForOrSchedule(page)
-                cacheForOrSchedule(page)
-            }
-        }
-        dropCachesExcept(band.keep)
     }
 
     /**
@@ -1483,234 +973,6 @@ class CanvasState(
             last = i
         }
         return if (first < 0) null else first..last
-    }
-
-    // --- sharp viewport ---
-
-    /** True when the current zoom pushes a visible page past [maxCachePx] (its cache is clamped). */
-    fun isPastResolutionCap(): Boolean {
-        val target = zoom * renderScale
-        val visible = visibleContentRect()
-        for (i in pageRects.indices) {
-            val pr = pageRects.getOrNull(i) ?: continue
-            if (!pr.intersects(visible)) continue
-            val page = document.pages[i]
-            if (target * max(outerW(page), outerH(page)) > maxCachePx) return true
-        }
-        return false
-    }
-
-    /**
-     * Ready sharp layers (background then ink) plus the affine transform to blit them at: each is
-     * drawn into `Rect(dx, dy, base.width * scale, base.height * scale)`.
-     */
-    class SharpBlit(
-        val base: RasterSurface,
-        val ink: RasterSurface,
-        val scale: Double,
-        val dx: Double,
-        val dy: Double,
-        /** The buffer past the viewport on each side, in surface px (multiply by [scale] for screen px). */
-        val padX: Double,
-        val padY: Double,
-    )
-
-    /**
-     * The sharp viewport layers to blit, or null when there isn't a usable one. It stays usable
-     * across a *pan or zoom* (same content): rendered for an earlier view, we re-fit it with a
-     * scale + translate so the content lines up — the part still on screen stays sharp (crisper than
-     * the soft cache even when scaled), and whatever falls outside it uses the soft cache underneath
-     * until the settled re-render lands. Only a non-incremental content edit ([sharpGen] moved)
-     * makes it unusable; writes and erases patch the ink layer directly ([appendToSharpInk] /
-     * [repairSharpInk]) so they keep it valid.
-     */
-    fun sharpViewportBlit(): SharpBlit? {
-        val f = sharpFrame ?: return null
-        if (f.gen != sharpGen) return null
-        val scale = zoom / f.z
-        val o = origin() // live origin, incl. overscroll lift, so the sharp page rides the pull too
-        val o0 = originFor(f.sx, f.sy, f.z)
-        // Surface pixel p maps to screen scale*p + (o - scale*o0).
-        return SharpBlit(f.base, f.ink, scale, o.x - scale * o0.x - scale * f.mx, o.y - scale * o0.y - scale * f.my, f.mx, f.my)
-    }
-
-    /** Drop the sharp viewport surface (e.g. once the zoom falls back below the cap). */
-    fun clearSharpViewport() {
-        sharpFrame = null
-    }
-
-    /**
-     * Render the current viewport — paper + background + ink for the visible pages — at full zoom
-     * resolution into one viewport-sized surface, off the UI thread, tagged with the exact view it
-     * was rendered for. Used past the resolution cap so a deep zoom stays razor-sharp without
-     * caching whole pages; the result is reused only while the view is unchanged (see
-     * [sharpSurfaceForView]) and re-rendered when the user pans/zooms to a new area.
-     */
-    fun requestSharpViewport() {
-        if (pendingSharp || zoomingInProgress || viewportW <= 0 || viewportH <= 0) return
-        if (!isPastResolutionCap()) return
-        val gen = sharpGen
-        val sx = scrollX
-        val sy = scrollY
-        val z = zoom
-        val vw = viewportW
-        val vh = viewportH
-        val res = z * renderScale
-        val o = originFor(sx, sy, z)
-        // The frame reaches past the screen on every side, so panning slides sharp pixels into view
-        // rather than the soft cache showing at the edge until the view settles.
-        val mx = (vw * SHARP_BUFFER).toInt()
-        val my = (vh * SHARP_BUFFER).toInt()
-        val seen = visibleFor(sx, sy, z)
-        val visible = Rect(seen.left - mx / z, seen.top - my / z, seen.w + 2 * mx / z, seen.h + 2 * my / z)
-        val bg = palette.bg
-        // Snapshot the visible pages and their items on the UI thread.
-        val drawable = drawablePageRange()
-        val draws = ArrayList<SharpPageSnap>()
-        for (i in document.pages.indices) {
-            if (i !in drawable) continue
-            val pr = pageRects.getOrNull(i) ?: continue
-            if (!pr.intersects(visible)) continue
-            val page = document.pages[i]
-            // The visible slice in page-local display coords, mapped to page space for the painters.
-            val displayRegion = Rect.fromPoints(
-                Pt(max(pr.left, visible.left) - pr.left, max(pr.top, visible.top) - pr.top),
-                Pt(min(pr.right, visible.right) - pr.left, min(pr.bottom, visible.bottom) - pr.top),
-            )
-            draws.add(SharpPageSnap(page, pr, cacheItems(page), displayRectToPage(page, displayRegion), i))
-        }
-        if (draws.isEmpty()) return
-        pendingSharp = true
-        pendingSharpEdits.clear()
-        val withFlow = !flowLifted // snapshot; a session toggle bumps sharpGen and discards this
-        runAsync {
-            val base = surfaceFactory.create(vw + 2 * mx, vh + 2 * my, 1.0).also { it.fill(bg) }
-            val ink = surfaceFactory.create(vw + 2 * mx, vh + 2 * my, 1.0).also { it.fill(TRANSPARENT) }
-            renderSharpFrame(base, ink, Pt(o.x + mx, o.y + my), z, res, draws, withFlow)
-            postToMain {
-                pendingSharp = false
-                if (gen == sharpGen && z == zoom) {
-                    // A pan since the render began is fine: the frame carries the view it was drawn for.
-                    sharpFrame = SharpFrame(base, ink, sx, sy, z, gen, mx.toDouble(), my.toDouble())
-                    // Replay edits committed during the build; the item snapshot predates them.
-                    for ((p, rect) in pendingSharpEdits) repairSharpInk(p, rect)
-                    onCacheReady?.invoke()
-                }
-                pendingSharpEdits.clear()
-            }
-        }
-    }
-
-    /** Paint the [base] (paper/border/background/labels) and [ink] (flow + strokes) sharp layers. */
-    private fun renderSharpFrame(
-        base: RasterSurface,
-        ink: RasterSurface,
-        o: Pt,
-        z: Double,
-        res: Double,
-        draws: List<SharpPageSnap>,
-        withFlow: Boolean = !flowLifted,
-    ) {
-        val rb = base.renderer()
-        rb.translate(o.x, o.y)
-        rb.scale(z, z)
-        val ri = ink.renderer()
-        ri.translate(o.x, o.y)
-        ri.scale(z, z)
-        val border = Pen(palette.paperBorder, 1.0, cosmetic = true)
-        for (d in draws) {
-            rb.fillRect(d.pr, paperColor(d.page))
-            if (pageBorders) rb.strokeRect(d.pr, border)
-            rb.save()
-            rb.clipRect(d.pr)
-            rb.translate(d.pr.left, d.pr.top)
-            applyPageTransform(rb, d.page)
-            if (paintPageBackground != null && d.region.w > 0.0 && d.region.h > 0.0) {
-                paintPageBackground?.invoke(d.page, rb, res, d.region)
-            }
-            rb.restore()
-            ri.save()
-            ri.clipRect(d.pr)
-            ri.translate(d.pr.left, d.pr.top)
-            applyPageTransform(ri, d.page)
-            if (withFlow && d.region.w > 0.0 && d.region.h > 0.0) {
-                paintFlow?.invoke(d.page, ri, d.region)
-            }
-            for (item in d.items) item.paint(ri)
-            ri.restore()
-        }
-    }
-
-    /** Paint a just-committed stroke into the live sharp ink layer so it stays crisp (no re-render). */
-    private fun appendToSharpInk(page: Page, item: CanvasItem) {
-        val f = sharpFrame ?: return
-        val idx = document.pages.indexOf(page)
-        val pr = pageRects.getOrNull(idx) ?: return
-        val o0 = originFor(f.sx, f.sy, f.z)
-        val r = f.ink.renderer()
-        r.save()
-        r.translate(o0.x + f.mx, o0.y + f.my)
-        r.scale(f.z, f.z)
-        r.clipRect(pr)
-        r.translate(pr.left, pr.top)
-        applyPageTransform(r, page)
-        item.paint(r)
-        r.restore()
-    }
-
-    /** Repair an erased region of the live sharp ink layer in place (background layer untouched). */
-    private fun repairSharpInk(page: Page, dirtyRect: Rect) {
-        val f = sharpFrame ?: return
-        val idx = document.pages.indexOf(page)
-        val pr = pageRects.getOrNull(idx) ?: return
-        val o0 = originFor(f.sx, f.sy, f.z)
-        val r = f.ink.renderer()
-        r.save()
-        r.translate(o0.x + f.mx, o0.y + f.my)
-        r.scale(f.z, f.z)
-        r.clipRect(pr)
-        r.translate(pr.left, pr.top)
-        applyPageTransform(r, page)
-        r.clipRect(dirtyRect)
-        r.clear()
-        if (!flowLifted) paintFlow?.invoke(page, r, dirtyRect)
-        for (item in page.items) {
-            if (!isLiftedItem(item) && !item.isHighlighterInk() && item.paintBounds().intersects(dirtyRect)) item.paint(r)
-        }
-        r.restore()
-    }
-
-    private fun originFor(sx: Double, sy: Double, z: Double): Pt {
-        val cw = contentW * z
-        val ch = contentH * z
-        val ox = if (!verticalScroll || cw >= clearW) -sx else insetLeft + (clearW - cw) / 2.0
-        val oy = if (ch < clearH) insetTop + (clearH - ch) / 2.0 else -sy
-        return Pt(ox, oy)
-    }
-
-    private fun visibleFor(sx: Double, sy: Double, z: Double): Rect {
-        val o = originFor(sx, sy, z)
-        return Rect.fromPoints(
-            Pt(-o.x / z, -o.y / z),
-            Pt((viewportW - o.x) / z, (viewportH - o.y) / z),
-        )
-    }
-
-    /** A read-only count of the live page caches and their bitmap bytes, for the debug overlay. */
-    class CacheSnapshot(
-        val visiblePages: Int,
-        val inkPages: Int,
-        val bgPages: Int,
-        val bytes: Long,
-    )
-
-    fun cacheSnapshot(): CacheSnapshot {
-        var bytes = 0L
-        for (e in caches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
-        for (e in bgCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
-        for (e in hlCaches.values) bytes += e.surface.width.toLong() * e.surface.height * 4L
-        val visible = visiblePageRange()?.let { it.last - it.first + 1 } ?: 0
-        return CacheSnapshot(visible, caches.size, bgCaches.size, bytes)
     }
 
     /** Last note-open timings (ms), for the debug overlay; -1 until the first open. [lastOpenReadMs]
@@ -1756,22 +1018,6 @@ class CanvasState(
      *  "done" or "failed". */
     var autosaveStatus = "idle"
 
-    /**
-     * The pixel dimensions the current page's cache *would* be built at for the current
-     * zoom (i.e. [clampedRes] applied). Tracks live while zooming — unlike the actual
-     * cached surface, which is blitted stale-scaled during a pinch and only rebuilt when
-     * the gesture ends. Used by the debug overlay's `res` line; returns 0×0 with no pages.
-     */
-    fun targetRasterSize(): Pair<Int, Int> {
-        val pages = document.pages
-        if (pages.isEmpty()) return 0 to 0
-        val page = pages[currentPageIndex()]
-        val res = clampedRes(page)
-        val w = ceil(outerW(page) * res).toInt().coerceAtLeast(1)
-        val h = ceil(outerH(page) * res).toInt().coerceAtLeast(1)
-        return w to h
-    }
-
     companion object {
         const val MARGIN = 48.0
         const val MIN_ZOOM = 0.12
@@ -1782,14 +1028,8 @@ class CanvasState(
         const val SNAP_TO_FIT_WIDTH = 0.05
         const val CTRL_WHEEL_BASE = 1.01
 
-        /** Padding (content px) around a highlighter's bounds in its cached bitmap, for AA edges. */
-        const val HL_PAD = 2.0
-
-        /** Padding (content px) around a replayed or repaired dirty rect, for AA edges. */
-        const val SHARP_EDIT_PAD = 2.0
-
-        /** How far the sharp viewport reaches past the screen, as a fraction of the viewport on each side. */
-        const val SHARP_BUFFER = 0.25
+        /** Padding (content px) around a repaired dirty rect, for AA edges. */
+        const val EDIT_PAD = 2.0
 
         /** Gap (viewport px) left above the page top so nothing hides behind the toolbar. */
         const val TOP_GAP = 16.0

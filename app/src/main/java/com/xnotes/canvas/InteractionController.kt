@@ -2941,7 +2941,6 @@ class InteractionController(
         mode = PointerMode.IDLE
         if (state.zoomingInProgress) {
             state.zoomingInProgress = false
-            state.invalidateCachesForZoom() // keep stale surfaces to blit until the sharp rebuild lands
         }
         onViewChanged()
         requestRender()
@@ -2976,7 +2975,6 @@ class InteractionController(
         if (mode == PointerMode.SHOT) { screenshotRect = null; onScreenshotMenu(null) }
         if (mode == PointerMode.PINCH && state.zoomingInProgress) {
             state.zoomingInProgress = false
-            state.invalidateCachesForZoom()
         }
         mode = PointerMode.IDLE
     }

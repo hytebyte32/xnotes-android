@@ -1,11 +1,7 @@
 package com.xnotes.canvas
 
-import android.graphics.Bitmap
-import android.graphics.Rect as AndroidRect
 import android.os.Handler
 import android.os.Looper
-import android.view.PixelCopy
-import android.view.Window
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.infinite.InkPass
@@ -364,41 +360,10 @@ class FrontInk(
     }
 
     /**
-     * Take the canvas as it stands, put it behind the ink on the pad, and only then hand over.
-     *
-     * Every failure path ends the same way, because a handover that is merely timed is far better
-     * than a stroke that never reaches the canvas.
+     * Hand the held items over. GL draws the committed stroke itself and the pad comes down after
+     * the GL frame that has it, so nothing needs capturing from under the pad.
      */
-    private fun capture() {
-        // With GL ink the canvas under the pad is a separate surface that a window capture comes back
-        // black for, which showed as a black square the size of the stroke. GL draws the committed
-        // stroke itself, and the pad comes down after the GL frame that has it, so no capture is needed.
-        if (view.glMode) return finish()
-        val box = pad.strokeBox() ?: return finish()
-        val window = window() ?: return finish()
-        val src = inWindow(window, box) ?: return finish()
-        val shot = try {
-            Bitmap.createBitmap(src.width(), src.height(), Bitmap.Config.ARGB_8888)
-        } catch (e: OutOfMemoryError) {
-            return finish()
-        }
-        val gen = handoffGen
-        // However the capture goes, the stroke reaches the canvas: late is a blink, never is a lost
-        // stroke. One Runnable, held, because a fresh method reference cannot be cancelled.
-        val timeout = Runnable { if (gen == handoffGen) finish() }
-        handler.postDelayed(timeout, CAPTURE_TIMEOUT_MS)
-        try {
-            PixelCopy.request(window, src, shot, { result ->
-                handler.removeCallbacks(timeout)
-                if (gen != handoffGen) return@request
-                if (result != PixelCopy.SUCCESS) return@request finish()
-                pad.coverWith(shot, box) { if (gen == handoffGen) finish() }
-            }, handler)
-        } catch (e: IllegalArgumentException) {
-            handler.removeCallbacks(timeout)
-            finish()
-        }
-    }
+    private fun capture() = finish()
 
     /** Let the held items reach the canvas, and take the pad down once that frame is out. */
     private fun finish() {
@@ -427,34 +392,6 @@ class FrontInk(
         return true
     }
 
-    /** The window the canvas draws into, which is what a capture of what is under the ink comes from. */
-    private fun window(): Window? {
-        var context: android.content.Context? = view.context
-        while (context is android.content.ContextWrapper) {
-            if (context is android.app.Activity) return context.window
-            context = context.baseContext
-        }
-        return null
-    }
-
-    /**
-     * [box], in the canvas's pixels, as window pixels inside the window's own bounds.
-     *
-     * The pad is a layer above the window, so a copy of the window is the canvas *without* the ink
-     * that is on the pad, which is exactly what has to go behind it.
-     */
-    private fun inWindow(window: Window, box: AndroidRect): AndroidRect? {
-        val decor = window.peekDecorView() ?: return null
-        val at = IntArray(2)
-        view.getLocationInWindow(at)
-        val src = AndroidRect(box.left + at[0], box.top + at[1], box.right + at[0], box.bottom + at[1])
-        // Whole or not at all: a capture cut down to the window would be stretched back over the
-        // box it was taken from, which is worse than not covering at all.
-        if (src.isEmpty || src.left < 0 || src.top < 0) return null
-        if (src.right > decor.width || src.bottom > decor.height) return null
-        return src
-    }
-
     private companion object {
         /** Points a run holds on the ordinary path, matching the wet cache's own bake size. */
         const val WET_RUN_POINTS = 96
@@ -463,8 +400,5 @@ class FrontInk(
 
         /** Samples the pad antialiases live ink with; the canvas itself draws through Skia. */
         const val SAMPLES = 4
-
-        /** How long the handover waits for the capture before giving the stroke back anyway (ms). */
-        const val CAPTURE_TIMEOUT_MS = 120L
     }
 }

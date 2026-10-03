@@ -300,20 +300,17 @@ class BenchActivity : ComponentActivity() {
             st.fitWidth()
             if (zoomMul != 1.0) st.setZoomAnchored(st.clearCenter(), st.zoom * zoomMul)
             delay(1500)
-            var blurry = 0
             var frames = 0
             val r = gesture(
                 kind, ed.view, 4.0,
                 { Triple(st.zoom, st.scrollX, st.scrollY) },
             ) {
                 frames++
-                if (st.isPastResolutionCap() && st.sharpViewportBlit() == null) blurry++
             }
             r.put("renderer", "paged").put("strokes", n).put("gesture", label).put("load_ms", loadMs)
-            r.put("blurry_frame_pct", if (frames == 0) 0.0 else round(100.0 * blurry / frames))
             out.put(r)
             line("paged  $label  p50 ${r.optDouble("p50_ms")} p95 ${r.optDouble("p95_ms")} max ${r.optDouble("max_ms")} ms, " +
-                ">1.5x ${r.optDouble("over_1_5_refresh_pct")}%, blurry ${r.optDouble("blurry_frame_pct")}%")
+                ">1.5x ${r.optDouble("over_1_5_refresh_pct")}%")
             delay(800)
         }
         st.scrollY = 0.0
@@ -848,18 +845,15 @@ class BenchActivity : ComponentActivity() {
                 st.fitWidth()
                 if (mul != 1.0) st.setZoomAnchored(st.clearCenter(), st.zoom * mul)
                 delay(1500)
-                var blurry = 0
                 var frames = 0
                 val r = gesture(kind, ed.view, 4.0, { Triple(st.zoom, st.scrollX, st.scrollY) }) {
                     frames++
-                    if (st.isPastResolutionCap() && st.sharpViewportBlit() == null) blurry++
                 }
                 r.put("scenario", label).put("gesture", gestureLabel).put("load_ms", loadMs)
-                r.put("blurry_frame_pct", if (frames == 0) 0.0 else round(100.0 * blurry / frames))
                 rows.put(r)
                 autosave()
                 line("pdf pan [$label] $gestureLabel  p50 ${r.optDouble("p50_ms")} p95 ${r.optDouble("p95_ms")} max ${r.optDouble("max_ms")} ms, " +
-                    ">1.5x ${r.optDouble("over_1_5_refresh_pct")}%, blurry ${r.optDouble("blurry_frame_pct")}%")
+                    ">1.5x ${r.optDouble("over_1_5_refresh_pct")}%")
                 delay(600)
             }
             results.put("mem_pdf_pan_${ink}", memorySnapshot())
@@ -1023,7 +1017,7 @@ class BenchActivity : ComponentActivity() {
         settle()
         settle()
         fun c() = host.counts()
-        row("GL ink on", st.glBridge != null && ed.view.glMode, c().toString())
+        row("GL ink on", st.glBridge != null, c().toString())
         row("strokes drawn", c().vectors > 0, "vectors visible ${c().vectors}")
 
         val page = st.document.pages[0]

@@ -10,8 +10,6 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import com.xnotes.R
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.model.Page
@@ -36,23 +34,11 @@ class CanvasView @JvmOverloads constructor(
             field = value
             value?.let { st ->
                 st.devicePxPerDp = resources.displayMetrics.density.toDouble()
-                // Rasterize newly visible pages off the UI thread so scrolling never
-                // stalls while a page is built; publish the surface back on the main
-                // thread and ask for a repaint.
-                st.runAsync = { work ->
-                    val ex = cacheExecutor
-                    if (ex != null && !ex.isShutdown) ex.execute(work) else work()
-                }
-                st.postToMain = { work -> mainHandler.post(work) }
-                st.onCacheReady = { requestRender() }
             }
             invalidate()
         }
 
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    /** Single background thread that builds page caches; lives while the view is attached. */
-    private var cacheExecutor: ExecutorService? = null
 
     /** Hook for overlay drawing (selection/live-stroke/eraser), set by the interaction layer. */
     var drawOverlay: ((renderer: AndroidRenderer, canvas: Canvas) -> Unit)? = null
@@ -65,9 +51,6 @@ class CanvasView @JvmOverloads constructor(
 
     /** Clean three-finger tap (finger-only, brief, near-stationary), for the configurable gesture. */
     var onThreeFingerTap: (() -> Unit)? = null
-
-    /** A clean five-finger tap; used to flip the temporary GL-ink switch. */
-    var onFiveFingerTap: (() -> Unit)? = null
 
     /** Invoked after the viewport is (re)laid out and the initial fit applied. */
     var afterLayout: (() -> Unit)? = null
@@ -311,9 +294,7 @@ class CanvasView @JvmOverloads constructor(
                 if (fourFingerActive) {
                     fourFingerActive = false
                     val quick = e.eventTime - gestureDownMs <= TAP_TIMEOUT_MS
-                    if (quick && !fourMoved && gestureMaxPointers >= 5) {
-                        onFiveFingerTap?.invoke()
-                    } else if (quick && !fourMoved && gestureMaxPointers == 4) {
+                    if (quick && !fourMoved && gestureMaxPointers == 4) {
                         debugOverlay.toggle()
                         startDebugTick()
                         requestRender()
@@ -404,19 +385,12 @@ class CanvasView @JvmOverloads constructor(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        if (cacheExecutor?.isShutdown != false) {
-            cacheExecutor = Executors.newSingleThreadExecutor { r ->
-                Thread(r, "xnotes-cache").apply { isDaemon = true }
-            }
-        }
         startDebugTick() // resume the HUD ticker if it was left enabled across a detach/reattach
     }
 
     override fun onDetachedFromWindow() {
-        cacheExecutor?.shutdown()
         mainHandler.removeCallbacks(debugTick)
-        mainHandler.removeCallbacks(sharpDebounce)
-        super.onDetachedFromWindow()
+            super.onDetachedFromWindow()
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -436,18 +410,11 @@ class CanvasView @JvmOverloads constructor(
     }
 
     /**
-     * Set while a GL view under this one draws the paper, page backgrounds and all ink. This view
-     * then only keeps the camera in step, clears itself transparent so the GL view shows through,
-     * and draws what is still Skia: tool overlays, the scrollbar and the debug HUD.
+     * A GL view under this one draws the paper, page backgrounds and all ink. This view only keeps
+     * the camera in step, clears itself transparent so the GL view shows through, and draws what is
+     * still Skia: tool overlays, the scrollbar and the debug HUD. Called from every draw with the
+     * zoom and the screen position of content (0,0).
      */
-    var glMode: Boolean = false
-        set(value) {
-            if (field == value) return
-            field = value
-            invalidate()
-        }
-
-    /** Called from every draw in [glMode] with the zoom and the screen position of content (0,0). */
     var glCamera: ((zoom: Double, originX: Double, originY: Double) -> Unit)? = null
 
     /** Runs a callback once the GL view's next frame has been drawn; set by the GL host. */
@@ -471,156 +438,8 @@ class CanvasView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         val st = state ?: return
-        if (glMode) {
-            drawGlMode(canvas, st)
-            return
-        }
-        canvas.drawColor(st.palette.bg.toArgb())
-
-        val r = AndroidRenderer(canvas)
-        val origin = st.origin()
-        r.save()
-        r.translate(origin.x, origin.y)
-        r.scale(st.zoom, st.zoom)
-
-        val visible = st.visibleContentRect()
-        val border = Pen(st.palette.paperBorder, 1.0, cosmetic = true)
-        // Paginated mode shows only the current row; neighbours never draw.
-        val drawable = st.drawablePageRange()
-
-        for (i in st.document.pages.indices) {
-            if (i !in drawable) continue
-            val pr = st.pageRects.getOrNull(i) ?: continue
-            if (!pr.intersects(visible)) continue
-            val page = st.document.pages[i]
-
-            r.fillRect(pr, st.paperColor(page))
-            if (st.pageBorders) r.strokeRect(pr, border)
-            st.backgroundForOrSchedule(page)?.let { blitPageSurface(r, st, page, pr, it.surface) }
-            // A live caret session lifts the flow out of the ink cache; paint it
-            // immediate-mode here (under the ink, over the background) so every
-            // keystroke shows without waiting for a cache rebuild.
-            if (st.flowLifted) {
-                r.withSave {
-                    r.clipRect(pr)
-                    r.translate(pr.left, pr.top)
-                    st.applyPageTransform(r, page)
-                    st.paintFlow?.invoke(page, r, st.displayRectToPage(page, visible.translate(-pr.left, -pr.top)))
-                }
-            }
-            st.cacheForOrSchedule(page)?.let { blitPageSurface(r, st, page, pr, it.surface) }
-        }
-        r.restore()
-
-        // Past the resolution cap, cover the (soft, capped) page caches with a razor-sharp,
-        // full-resolution render of just the viewport. While panning we slide the previous sharp
-        // render with the content (so short pans stay sharp) and let the soft cache show only in
-        // the strip panning into view; once the view settles we re-render the sharp viewport for
-        // the new area. A zoom change drops back to the soft caches until the settle re-render.
-        if (st.isPastResolutionCap()) {
-            val blit = st.sharpViewportBlit()
-            if (blit != null) {
-                val dw = blit.base.width * blit.scale
-                val dh = blit.base.height * blit.scale
-                r.drawRaster(blit.base, Rect(blit.dx, blit.dy, dw, dh))
-                // A lifted flow is absent from the sharp ink layer too: draw it live
-                // between the sharp base and sharp ink so the stack order holds.
-                // Clipped to the blit's own rect: outside it the page loop's live pass
-                // already painted the flow, and a second (translucent) chip on top
-                // reads as a lighter band while the slid sharp frame settles.
-                if (st.flowLifted) {
-                    r.withSave {
-                        r.clipRect(Rect(blit.dx, blit.dy, dw, dh))
-                        r.translate(origin.x, origin.y)
-                        r.scale(st.zoom, st.zoom)
-                        for (i in st.document.pages.indices) {
-                            if (i !in drawable) continue
-                            val pr = st.pageRects.getOrNull(i) ?: continue
-                            if (!pr.intersects(visible)) continue
-                            val page = st.document.pages[i]
-                            r.withSave {
-                                r.clipRect(pr)
-                                r.translate(pr.left, pr.top)
-                                st.applyPageTransform(r, page)
-                                st.paintFlow?.invoke(page, r, st.displayRectToPage(page, visible.translate(-pr.left, -pr.top)))
-                            }
-                        }
-                    }
-                }
-                r.drawRaster(blit.ink, Rect(blit.dx, blit.dy, dw, dh))
-                mainHandler.removeCallbacks(sharpDebounce)
-                // Off the exact rendered view (panned or zoomed): re-render for where we settle.
-                val exact = blit.scale == 1.0 && blit.dx == -blit.padX && blit.dy == -blit.padY
-                if (!exact) mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
-                // Do not wait for the view to stop: once the spare buffer on any side is nearly used up,
-                // start the next render now, so a long pan keeps meeting sharp pixels.
-                val spare = minOf(-blit.dx, blit.dx + dw - st.viewportW.toDouble(), -blit.dy, blit.dy + dh - st.viewportH.toDouble())
-                if (spare < SHARP_REFRESH_FRACTION * minOf(blit.padX, blit.padY) * blit.scale) st.requestSharpViewport()
-            } else {
-                mainHandler.removeCallbacks(sharpDebounce)
-                mainHandler.postDelayed(sharpDebounce, SHARP_SETTLE_MS)
-            }
-        } else {
-            mainHandler.removeCallbacks(sharpDebounce)
-            st.clearSharpViewport()
-        }
-
-        // Highlighters composite here, over the finished page (paper + background + ink), so
-        // their MULTIPLY blend darkens against everything beneath instead of washing it out —
-        // matching the live preview. They're few and drawn at screen resolution (so crisp at
-        // any zoom); pen/calligraphy ink stays cached underneath.
-        r.withSave {
-            r.translate(origin.x, origin.y)
-            r.scale(st.zoom, st.zoom)
-            for (i in st.document.pages.indices) {
-                if (i !in drawable) continue
-                val pr = st.pageRects.getOrNull(i) ?: continue
-                if (!pr.intersects(visible)) continue
-                val page = st.document.pages[i]
-                // Page-space visible rect, so off-band highlighters on a tall page skip the composite.
-                val visLocal = st.displayRectToPage(page, visible.translate(-pr.left, -pr.top))
-                r.withSave {
-                    r.clipRect(pr)
-                    r.translate(pr.left, pr.top)
-                    st.applyPageTransform(r, page)
-                    for (item in page.items) {
-                        if (item is Stroke && item.isHighlighterInk() && !st.isLiftedItem(item) &&
-                            item.bounds().intersects(visLocal)
-                        ) {
-                            // Blit the pre-rendered opaque ribbon at the ink's alpha and blend,
-                            // instead of re-tessellating the ribbon every frame.
-                            val hc = st.highlighterCacheFor(item, page)
-                            r.drawRasterBlended(hc.surface, hc.cover, item.renderColor.a / 255.0, item.blendMode)
-                        } else if (item is com.xnotes.core.model.ShapeItem && item.isHighlighter && !st.isLiftedItem(item) &&
-                            item.bounds().intersects(visLocal)
-                        ) {
-                            item.paint(r) // a snapped highlighter: one multiplied layer over the finished page
-                        }
-                    }
-                }
-            }
-        }
-
-        drawOverlay?.invoke(r, canvas)
-
-        // Elastic "pull past the end to add a page" affordance, on top of everything (viewport space).
-        if (st.overscrollY > 1.0) {
-            drawOverscrollIndicator(canvas, st)
-        } else if (!st.verticalScroll && st.flipOffsetX > 1.0 && st.currentRow >= st.rowRanges().size - 1) {
-            drawFlipAddPageIndicator(canvas, st)
-        }
-
-        drawScrollbar(canvas, st)
-
-        st.prefetchAndPrune()
-
-        // Debug HUD on top, reading the just-pruned cache state (viewport space).
-        debugOverlay.sampleFrame(System.nanoTime())
-        debugOverlay.draw(r, st)
+        drawGlMode(canvas, st)
     }
-
-    /** Fires once the view has been still for [SHARP_SETTLE_MS], rendering the sharp viewport. */
-    private val sharpDebounce = Runnable { state?.requestSharpViewport() }
 
     /** Blit a page-space cache surface into the page's display rect, rotated per the view. The
      *  surface covers the page's whole footprint (margins included), so it blits at [CanvasState.footprint]. */
@@ -774,10 +593,8 @@ class CanvasView @JvmOverloads constructor(
         private const val TAP_SLOP = 40.0
 
         /** How long the view must be still before the sharp viewport is rendered (ms). */
-        private const val SHARP_SETTLE_MS = 90L
 
         /** Re-render the sharp viewport when less than this fraction of its buffer is left on a side. */
-        private const val SHARP_REFRESH_FRACTION = 0.4
 
         /** Idle repaint interval (ms) while the debug HUD is visible, so its FPS falls to 0. */
         private const val DEBUG_TICK_MS = 250L
