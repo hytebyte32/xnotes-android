@@ -1031,7 +1031,9 @@ class BenchActivity : ComponentActivity() {
 
         // 1. text the way the text tool makes it
         var before = c()
+        ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.STROKE))
         val n0 = page.items.size
+        val rec0 = host.counts().records
         ed.controller.debugCreateText(0, pt, "text tool box")
         settle()
         var after = c()
@@ -1069,6 +1071,7 @@ class BenchActivity : ComponentActivity() {
 
         // 4. select all, then clear: lifted items must come back to GL
         val full = c()
+        val preMove = host.counts()
         ed.controller.selectAll()
         settle()
         val lifted = c()
@@ -1080,6 +1083,7 @@ class BenchActivity : ComponentActivity() {
             "vec ${after.vectors}/${full.vectors} img ${after.images}/${full.images} txt ${after.texts}/${full.texts}")
 
         // 5. delete the selection, undo it
+        val preMove = host.counts()
         ed.controller.selectAll()
         settle()
         ed.controller.deleteSelection()
@@ -1211,6 +1215,7 @@ class BenchActivity : ComponentActivity() {
         row("highlighter and pen line added", withMarks > base, "ink ${fmt(base)} -> ${fmt(withMarks)}")
 
         // 2. select all: GL lets go of lifted items; move; unselect
+        val preMove = host.counts()
         ed.controller.selectAll()
         settle()
         val lifted = host.counts()
@@ -1219,7 +1224,9 @@ class BenchActivity : ComponentActivity() {
         ed.controller.clearSelection()
         settle()
         val moved = inkShare()
-        row("move: no ghost or lost ink", near(moved, withMarks, 0.12), "ink ${fmt(withMarks)} -> ${fmt(moved)}")
+        // everything moved together, so a ghost at the old place would roughly double the ink and a lost item would cut it
+        val postMove = host.counts()
+        row("move: no ghost or lost ink", near(moved, withMarks, 0.25) && postMove.records == preMove.records, "ink ${fmt(withMarks)} -> ${fmt(moved)}; records ${preMove.records} -> ${postMove.records}")
 
         // 3. eraser, whole-stroke mode
         fun midOfFirstPen(): Pt? {
@@ -1227,11 +1234,14 @@ class BenchActivity : ComponentActivity() {
             val m = s.sampleAt(s.samples.size / 2)
             return Pt(m.x, m.y)
         }
+        ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.STROKE))
         val n0 = page.items.size
+        val rec0 = host.counts().records
         val c1 = midOfFirstPen()
         val hit1 = c1 != null && ed.controller.debugErase(0, c1.x, c1.y, 40.0)
         val afterErase = inkShare()
-        row("eraser (stroke): removes the stroke from GL", hit1 && page.items.size < n0 && afterErase < moved, "items $n0 -> ${page.items.size}, ink ${fmt(moved)} -> ${fmt(afterErase)}")
+        val rec1 = host.counts().records
+        row("eraser (stroke): removes the stroke from GL", hit1 && page.items.size == n0 - 1 && rec1 == rec0 - 1, "items $n0 -> ${page.items.size}, records $rec0 -> $rec1, ink ${fmt(moved)} -> ${fmt(afterErase)}")
 
         // 4. eraser, partial mode, as a drag
         ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.AREA))
@@ -1268,6 +1278,8 @@ class BenchActivity : ComponentActivity() {
 
         // 7. rotation: GL keeps drawing, turned, and comes back unchanged
         val upright = withSvg
+        val uprightCounts = host.counts()
+        val z0 = st.zoom; val sx0 = st.scrollX; val sy0 = st.scrollY
         for (deg in listOf(90, 180, 270)) {
             runCatching { ed.updateViewOverrides(com.xnotes.canvas.ViewOverrides(rotation = deg)) }.onFailure { row("rotate $deg", false, it.toString()) }
             settle(); settle()
@@ -1276,8 +1288,10 @@ class BenchActivity : ComponentActivity() {
         }
         runCatching { ed.updateViewOverrides(com.xnotes.canvas.ViewOverrides(rotation = 0)) }
         settle(); settle()
+        st.zoom = z0; st.scrollX = sx0; st.scrollY = sy0; st.clampScroll()
+        ed.view.invalidate()
         val back = inkShare()
-        row("upright again: same as before", near(back, upright, 0.15), "ink ${fmt(upright)} -> ${fmt(back)}")
+        row("upright again: same as before", near(back, upright, 0.15), "ink ${fmt(upright)} -> ${fmt(back)}; zoom ${fmt(z0)} -> ${fmt(st.zoom)}; before ${uprightCounts}; after ${host.counts()}")
 
         st.document = Document.blank()
         st.invalidateAllCaches()
