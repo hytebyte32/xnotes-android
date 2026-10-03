@@ -1254,8 +1254,8 @@ class BenchActivity : ComponentActivity() {
                 i += 9
             }
             val afterArea = inkShare()
-            val tiny = page.items.count { it is Stroke && it.samples.size <= 2 }
-            row("eraser (area) drag: GL follows", afterArea < afterErase, "ink ${fmt(afterErase)} -> ${fmt(afterArea)}; $tiny fragments of 1-2 samples left")
+            val tiny = page.items.count { it is Stroke && it.samples.size <= 1 }
+            row("eraser (area) drag: GL follows, leaves no dots", afterArea < afterErase && tiny == 0, "ink ${fmt(afterErase)} -> ${fmt(afterArea)}; $tiny fragments of one sample left")
         } else {
             row("eraser (area) drag", false, "no pen stroke to sweep")
         }

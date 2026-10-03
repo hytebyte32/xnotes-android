@@ -10,7 +10,7 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** Area-erase split ([Stroke.erasedBy]): partitioning a stroke's samples around an eraser circle. */
+/** Area-erase split ([Stroke.erasedBy]): cutting a stroke's path where it crosses an eraser circle. */
 class StrokeEraseTest {
 
     private fun stroke(vararg pts: Pair<Double, Double>): Stroke =
@@ -33,20 +33,20 @@ class StrokeEraseTest {
     }
 
     @Test fun endTouchTrimsToOneFragment() {
-        // x = 0,10,20,30,40,50; circle at (5,0) r=8 covers samples 0 and 1, the rest survive.
+        // x = 0,10,20,30,40,50; circle at (5,0) r=8 covers x in [-3,13], so the survivor starts at the cut x=13.
         val s = stroke(0.0 to 0.0, 10.0 to 0.0, 20.0 to 0.0, 30.0 to 0.0, 40.0 to 0.0, 50.0 to 0.0)
         val frags = s.erasedBy(5.0, 0.0, 8.0)!!
         assertEquals(1, frags.size)
-        assertEquals(listOf(20.0, 30.0, 40.0, 50.0), frags[0].samples.map { it.x })
+        assertEquals(listOf(13.0, 20.0, 30.0, 40.0, 50.0), frags[0].samples.map { it.x })
     }
 
     @Test fun midHoleSplitsInTwo() {
-        // circle at (25,0) r=8 covers samples at x=20 and x=30 (indices 2,3) -> two fragments.
+        // circle at (25,0) r=8 covers x in [17,33] -> two fragments cut at the edge.
         val s = stroke(0.0 to 0.0, 10.0 to 0.0, 20.0 to 0.0, 30.0 to 0.0, 40.0 to 0.0, 50.0 to 0.0)
         val frags = s.erasedBy(25.0, 0.0, 8.0)!!
         assertEquals(2, frags.size)
-        assertEquals(listOf(0.0, 10.0), frags[0].samples.map { it.x }) // order preserved
-        assertEquals(listOf(40.0, 50.0), frags[1].samples.map { it.x })
+        assertEquals(listOf(0.0, 10.0, 17.0), frags[0].samples.map { it.x }) // order preserved
+        assertEquals(listOf(33.0, 40.0, 50.0), frags[1].samples.map { it.x })
     }
 
     @Test fun multipleHolesProduceThreeFragments() {
@@ -61,15 +61,31 @@ class StrokeEraseTest {
         )
         val frags = s.erasedBy(0.0, 0.0, 5.0)!!
         assertEquals(3, frags.size)
-        assertEquals(listOf(1, 2, 1), frags.map { it.samples.size })
+        assertEquals(listOf(2, 4, 2), frags.map { it.samples.size })
     }
 
-    @Test fun singleSurvivingSamplesAreKept() {
-        // Erase the middle of three collinear samples -> two single-sample dots survive (not dropped).
+    @Test fun survivorsRunUpToTheCircleEdgeNotToADot() {
+        // Erase the middle of three collinear samples: each side keeps a real piece up to x=5 / x=15.
         val s = stroke(0.0 to 0.0, 10.0 to 0.0, 20.0 to 0.0)
         val frags = s.erasedBy(10.0, 0.0, 5.0)!!
         assertEquals(2, frags.size)
-        assertTrue(frags.all { it.samples.size == 1 })
+        assertEquals(listOf(0.0, 5.0), frags[0].samples.map { it.x })
+        assertEquals(listOf(15.0, 20.0), frags[1].samples.map { it.x })
+    }
+
+    @Test fun aLongSegmentBetweenSamplesIsStillCut() {
+        val s = stroke(0.0 to 0.0, 100.0 to 0.0)
+        val frags = s.erasedBy(50.0, 0.0, 10.0)!!
+        assertEquals(2, frags.size)
+        assertEquals(40.0, frags[0].samples.last().x, 1e-4)
+        assertEquals(60.0, frags[1].samples.first().x, 1e-4)
+    }
+
+    @Test fun cutPointsInterpolatePressure() {
+        val s = Stroke(Tool.PEN, ToolConfig(), mutableListOf(Sample(0.0, 0.0, 0.2), Sample(100.0, 0.0, 1.0)))
+        val frags = s.erasedBy(50.0, 0.0, 10.0)!!
+        assertEquals(0.2 + 0.8 * 0.4, frags[0].samples.last().pressure, 1e-4)
+        assertEquals(0.2 + 0.8 * 0.6, frags[1].samples.first().pressure, 1e-4)
     }
 
     @Test fun fragmentsShareToolConfigAndSpeedScale() {
@@ -88,11 +104,11 @@ class StrokeEraseTest {
 
     @Test fun fragmentsAreIndependentCopies() {
         val orig = stroke(0.0 to 0.0, 10.0 to 0.0, 20.0 to 0.0)
-        val frag = orig.erasedBy(0.0, 0.0, 5.0)!!.first() // survivors: x=10,20
+        val frag = orig.erasedBy(0.0, 0.0, 5.0)!!.first() // survivors: the cut at x=5, then x=10,20
         val sizeBefore = frag.samples.size
         orig.setSamples(emptyList()) // mutating the original must not disturb the fragment's copy
         assertEquals(sizeBefore, frag.samples.size)
-        assertEquals(10.0, frag.samples.first().x, 1e-12)
+        assertEquals(5.0, frag.samples.first().x, 1e-4)
     }
 
     @Test fun agreesWithIntersectsCircle() {
@@ -102,7 +118,7 @@ class StrokeEraseTest {
             Triple(5.0, 0.0, 6.0),     // hits sample 0
             Triple(100.0, 100.0, 5.0), // far miss (bbox reject)
             Triple(20.0, 10.0, 4.0),   // hits sample 2
-            Triple(15.0, 5.0, 2.0),    // inside bbox but reaches no sample
+            Triple(15.0, 5.0, 2.0),    // on the segment between samples 1 and 2
             Triple(25.0, 10.0, 50.0),  // covers everything
         )
         for ((cx, cy, r) in cases) {
