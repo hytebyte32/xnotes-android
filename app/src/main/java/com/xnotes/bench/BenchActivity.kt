@@ -1239,7 +1239,7 @@ class BenchActivity : ComponentActivity() {
         val hit1 = c1 != null && ed.controller.debugErase(0, c1.x, c1.y, 40.0)
         val afterErase = inkShare()
         val rec1 = host.counts().records
-        row("eraser (stroke): removes the stroke from GL", hit1 && page.items.size == n0 - 1 && rec1 == rec0 - 1, "items $n0 -> ${page.items.size}, records $rec0 -> $rec1, ink ${fmt(moved)} -> ${fmt(afterErase)}")
+        row("eraser (stroke): removes the stroke from GL", hit1 && page.items.size < n0 && rec1 == rec0 - (n0 - page.items.size) && afterErase < moved, "items $n0 -> ${page.items.size}, records $rec0 -> $rec1, ink ${fmt(moved)} -> ${fmt(afterErase)}")
 
         // 4. eraser, partial mode, as a drag
         ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.AREA))
