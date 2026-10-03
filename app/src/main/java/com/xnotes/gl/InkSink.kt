@@ -15,7 +15,7 @@ interface InkSink {
     fun batch(block: () -> Unit)
 
     /** A placed image, drawn from its own space displaced by ([dx], [dy]); [bounds] is in the plane. */
-    fun upsertImage(item: ImageItem, bounds: Rect, dx: Double, dy: Double) {}
+    fun upsertImage(item: ImageItem, bounds: Rect, dx: Double, dy: Double, rot: Int) {}
 
     /** A text box whose texture the host renders; [bounds] is in the plane and [key] stamps its content. */
     fun upsertText(item: TextItem, bounds: Rect, key: Long) {}
@@ -28,6 +28,6 @@ class CanvasSceneSink(private val scene: CanvasScene) : InkSink {
     override fun setOrder(items: List<CanvasItem>) = scene.setOrder(items)
     override fun reset() = scene.reset()
     override fun batch(block: () -> Unit) = scene.batch(block)
-    override fun upsertImage(item: ImageItem, bounds: Rect, dx: Double, dy: Double) = scene.upsertImage(item, bounds, dx, dy)
+    override fun upsertImage(item: ImageItem, bounds: Rect, dx: Double, dy: Double, rot: Int) = scene.upsertImage(item, bounds, dx, dy, rot)
     override fun upsertText(item: TextItem, bounds: Rect, key: Long) = scene.upsertText(item, bounds, key)
 }

@@ -61,6 +61,8 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         /** Displacement from the item's own space to the plane, for ink filed from a page. */
         val dx: Double = 0.0,
         val dy: Double = 0.0,
+        /** Quarter turns the page was rotated by before it was shifted by (dx, dy). */
+        val rot: Int = 0,
     )
 
     /** An edit handed over from the main thread. */
@@ -81,6 +83,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
             val textKey: Long = 0L,
             val dx: Double = 0.0,
             val dy: Double = 0.0,
+            val rot: Int = 0,
         ) : Edit()
 
         /**
@@ -223,8 +226,8 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
     }
 
     /** File a placed image. It carries no geometry: the renderer draws it as a textured quad. */
-    fun upsertImage(item: ImageItem, bounds: Rect, dx: Double = 0.0, dy: Double = 0.0) {
-        post(Edit.Upsert(item, emptyList(), bounds, item, false, dx = dx, dy = dy))
+    fun upsertImage(item: ImageItem, bounds: Rect, dx: Double = 0.0, dy: Double = 0.0, rot: Int = 0) {
+        post(Edit.Upsert(item, emptyList(), bounds, item, false, dx = dx, dy = dy, rot = rot))
     }
 
     /**
@@ -742,6 +745,11 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
     ) {
         val shader = imageShader ?: return
         if (image === cropGhost) drawImageQuad(shader, image, image.fullRect().translate(lift.dx + record.dx, lift.dy + record.dy), null, 0.35, frame)
+        if (record.rot != 0) {
+            // A turned page: the picture is placed in its own page space and the quad is carried onto the plane.
+            drawImageQuad(shader, image, image.rect, if (image.isCropped) image.crop else null, 1.0, frame, record.rot, record.dx, record.dy)
+            return
+        }
         val rect = image.rect.translate(lift.dx + record.dx, lift.dy + record.dy)
         drawImageQuad(shader, image, rect, if (image.isCropped) image.crop else null, 1.0, frame)
     }
@@ -775,6 +783,9 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         crop: Rect?,
         alpha: Double,
         frame: FrameState,
+        rot: Int = 0,
+        shiftX: Double = 0.0,
+        shiftY: Double = 0.0,
     ) {
         // Decode for the size the image actually occupies on screen right now.
         val wholeScale = if (crop != null) 1.0 / minOf(crop.w, crop.h) else 1.0
@@ -795,6 +806,12 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
                 val oy = wy - rect.centerY
                 wx = rect.centerX + ox * co - oy * sn
                 wy = rect.centerY + ox * sn + oy * co
+            }
+            if (rot != 0) {
+                val px = wx
+                val py = wy
+                wx = com.xnotes.core.infinite.rotX(rot, px, py) + shiftX
+                wy = com.xnotes.core.infinite.rotY(rot, px, py) + shiftY
             }
             val dx = (wx - frame.scrollX) * frame.zoom
             val dy = (wy - frame.scrollY) * frame.zoom
@@ -1185,7 +1202,7 @@ class CanvasScene(private val store: GeometryStore = GeometryStore(committed = t
         if (parts.isEmpty() && edit.image == null && edit.textItem == null) return
         val record = Record(
             edit.item, parts, edit.bounds, previousZ ?: nextZ++, edit.image,
-            edit.textItem, edit.textKey, edit.dx, edit.dy,
+            edit.textItem, edit.textKey, edit.dx, edit.dy, edit.rot,
         )
         records[edit.item] = record
         fileRecord(record)

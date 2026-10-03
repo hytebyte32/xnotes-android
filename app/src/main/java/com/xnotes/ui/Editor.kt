@@ -1116,7 +1116,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             controller.onTouch(ev)
         }
         view.onTwoFingerTap = { dispatchTapGesture(preferences.twoFingerTap) }
-        view.onFiveFingerTap = { toggleGlInk() }
         view.onThreeFingerTap = { dispatchTapGesture(preferences.threeFingerTap) }
         view.hover = { controller.onHover(it) }
         view.genericMotion = { controller.onGenericMotion(it) }
@@ -1507,7 +1506,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
         stale.retainAll { index.containsKey(it) }
         // The GL flow layer follows every republish, typing included; the Skia caches only on a settled one.
         glInk?.flowChanged(stale)
-        if (invalidate && glInk == null) stale.forEach { state.invalidatePage(it) }
     }
 
     /** Republish the flow when its content or the page list moved (cheap no-op otherwise). */
@@ -4088,57 +4086,14 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     }
 
     /** Push a settings change into the canvas/caches; each View-menu feature reacts here. */
-    /**
-     * Temporary switch (five-finger tap) between the Skia ink path and the GL path for paged notes,
-     * so the two can be compared on the tablet. Images and text boxes are not drawn in GL mode yet.
-     */
-    private var glInk: com.xnotes.canvas.GlInkHost? = null
-
-    /** Whether GL ink is wanted: on by default, off only if the user toggled it off. A rotated view pauses it. */
-    private var glWanted = EditorDefaults.glDefault
-
-    init {
-        if (glWanted && state.rotationDeg == 0) applyGl(true)
+    /** The GL ink host: paged notes always draw through it. */
+    private val glInk: com.xnotes.canvas.GlInkHost? = com.xnotes.canvas.GlInkHost(view.context, state, view) { controller.frontInk?.holding(it) == true }.also { host ->
+        surfaces.addView(host.glView, 0, android.widget.FrameLayout.LayoutParams(-1, -1))
+        host.attach()
     }
 
-    /** The GL ink host while GL ink is on, for the bench. */
-    val glInkHost: com.xnotes.canvas.GlInkHost? get() = glInk
-
-    /** Turn GL ink on or off; returns the host when on, or null (off, or refused for a rotated view). */
-    fun setGlInk(on: Boolean): com.xnotes.canvas.GlInkHost? {
-        glWanted = on
-        return applyGl(on)
-    }
-
-    /** Switch the GL host without changing whether GL is wanted (a rotated view only pauses it). */
-    private fun applyGl(on: Boolean): com.xnotes.canvas.GlInkHost? {
-        if ((glInk != null) == on) return glInk
-        if (on && state.rotationDeg != 0) return null
-        if (on) {
-            val host = com.xnotes.canvas.GlInkHost(view.context, state, view) { controller.frontInk?.holding(it) == true }
-            surfaces.addView(host.glView, 0, android.widget.FrameLayout.LayoutParams(-1, -1))
-            host.attach()
-            glInk = host
-        } else {
-            glInk?.let {
-                it.detach()
-                surfaces.removeView(it.glView)
-            }
-            glInk = null
-        }
-        return glInk
-    }
-
-    private fun toggleGlInk() {
-        val wasOn = glInk != null
-        if (!wasOn && state.rotationDeg != 0) {
-            android.widget.Toast.makeText(view.context, "GL ink needs an upright view", android.widget.Toast.LENGTH_SHORT).show()
-            return
-        }
-        glWanted = !wasOn
-        setGlInk(!wasOn)
-        android.widget.Toast.makeText(view.context, if (!wasOn) "GL ink: on" else "GL ink: off", android.widget.Toast.LENGTH_SHORT).show()
-    }
+    /** The GL ink host, for the bench. */
+    val glInkHost: com.xnotes.canvas.GlInkHost get() = checkNotNull(glInk) { "GL ink host not created yet" }
 
     private fun onViewSettingsChanged(prev: com.xnotes.canvas.ViewSettings, new: com.xnotes.canvas.ViewSettings) {
         if (prev.mode != new.mode || prev.rotation != new.rotation || prev.verticalScroll != new.verticalScroll) {
@@ -4148,8 +4103,6 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             val cur = if (state.didInitialFit) state.currentPageIndex() else 0
             state.viewingMode = new.mode
             state.rotationDeg = new.rotation
-            if (new.rotation != 0 && glInk != null) applyGl(false)
-            if (new.rotation == 0 && glInk == null && glWanted) applyGl(true)
             state.verticalScroll = new.verticalScroll
             state.flipOffsetX = 0.0
             if (new.verticalScroll) state.fitHeightActive = false // a paginated-only magnet
@@ -7047,9 +7000,3 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     }
 }
 
-/** Process-wide editor defaults the bench can flip to compare renderers. */
-object EditorDefaults {
-    /** GL ink for paged notes, on unless a bench baseline asks for the Skia path. */
-    @JvmField
-    var glDefault: Boolean = true
-}

@@ -9,6 +9,7 @@ import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.infinite.CanvasBackground
 import com.xnotes.core.infinite.ItemMesher
+import com.xnotes.core.infinite.rotatedQuarter
 import com.xnotes.core.model.CanvasItem
 import com.xnotes.core.model.Page
 import com.xnotes.core.model.TextItem
@@ -19,6 +20,7 @@ import com.xnotes.gl.CanvasSceneSink
 import com.xnotes.gl.InfiniteCanvasView
 import com.xnotes.gl.PageQuad
 import com.xnotes.gl.PagedInkSync
+import com.xnotes.gl.PageXform
 import com.xnotes.gl.PagedScene
 import com.xnotes.gl.TextBuckets
 import com.xnotes.platform.AndroidRenderer
@@ -71,7 +73,7 @@ class GlInkHost(
     private val flowWanted = IdentityHashMap<Page, Long>()
     private val flowInFlight = IdentityHashMap<Page, Long>()
 
-    private var origins: List<Pt> = emptyList()
+    private var xforms: List<PageXform> = emptyList()
     private var filedPages: List<Page> = emptyList()
     private var attached = false
 
@@ -149,20 +151,25 @@ class GlInkHost(
 
     override fun layoutChanged() {
         val pages = state.document.pages
-        val now = originsNow()
+        val now = xformsNow()
         if (now == null) return
         val samePages = pages.size == filedPages.size && pages.indices.all { pages[it] === filedPages[it] }
         if (!samePages) {
             rebuildAll()
             return
         }
+        // A turned view changes every page's underlay and filed geometry, so it starts over.
+        if (now.isNotEmpty() && xforms.isNotEmpty() && now[0].rot != xforms[0].rot) {
+            globalGen++
+            rebuildAll()
+            return
+        }
         // Only pages that actually moved are re-filed, so a window resize that leaves the layout
         // alone costs nothing.
         for (i in pages.indices) {
-            val o = origins[i]
-            if (abs(o.x - now[i].x) > 1e-6 || abs(o.y - now[i].y) > 1e-6) sync.refile(pages[i], now[i])
+            if (!xforms[i].same(now[i])) sync.refile(pages[i], now[i])
         }
-        origins = now
+        xforms = now
         republishPages()
         glView.publish()
     }
@@ -170,7 +177,7 @@ class GlInkHost(
     override fun inkChanged(page: Page, dirty: Rect?) {
         val i = state.document.pages.indexOfFirst { it === page }
         if (i < 0) return
-        val o = originsNow()?.get(i) ?: return
+        val o = xformsNow()?.get(i) ?: return
         sync.refile(page, o, dirty)
         glView.publish()
     }
@@ -191,7 +198,7 @@ class GlInkHost(
     override fun itemAppended(page: Page, item: CanvasItem) {
         val i = state.document.pages.indexOfFirst { it === page }
         if (i < 0) return
-        val o = originsNow()?.get(i) ?: return
+        val o = xformsNow()?.get(i) ?: return
         sync.appendItem(page, item, o)
         glView.publish()
     }
@@ -208,18 +215,30 @@ class GlInkHost(
 
     // --- internals ---
 
-    /** Content-space origin of each page's page space, or null while the layout has not caught up. */
-    private fun originsNow(): List<Pt>? {
+    /** How each page's space sits on the plane (turned by the view rotation, then shifted), or null while the layout has not caught up. */
+    private fun xformsNow(): List<PageXform>? {
         val pages = state.document.pages
         if (state.pageRects.size != pages.size) return null
-        return pages.indices.map { state.fromPageSpace(it, Pt(0.0, 0.0)) }
+        return pages.indices.map { i ->
+            val o = state.fromPageSpace(i, Pt(0.0, 0.0))
+            val x = state.fromPageSpace(i, Pt(1.0, 0.0))
+            val dx = x.x - o.x
+            val dy = x.y - o.y
+            val rot = when {
+                dx > 0.5 -> 0
+                dy > 0.5 -> 1
+                dx < -0.5 -> 2
+                else -> 3
+            }
+            PageXform(rot, o.x, o.y)
+        }
     }
 
     private fun rebuildAll() {
         val pages = state.document.pages
-        val now = originsNow() ?: return
+        val now = xformsNow() ?: return
         filedPages = ArrayList(pages)
-        origins = now
+        xforms = now
         sync.rebuild(pages, now)
         republishPages()
         glView.publish()
@@ -294,17 +313,26 @@ class GlInkHost(
         }
     }
 
-    /** Flow text alone, on a transparent bitmap the size of the page's footprint. */
-    private fun renderFlowLayer(page: Page, res: Double): Bitmap {
-        val cover = state.footprint(page)
-        val w = ceil(cover.w * res).toInt().coerceIn(1, MAX_EDGE)
-        val h = ceil(cover.h * res).toInt().coerceIn(1, MAX_EDGE)
+    /**
+     * A bitmap the size of [page]'s on-screen footprint at [res], with the canvas turned and shifted so
+     * that painting in page space lands where the page shows it, whatever the view rotation.
+     */
+    private inline fun pageBitmap(page: Page, res: Double, paint: (AndroidRenderer, Rect, Rect) -> Unit): Bitmap {
+        val dw = state.displayW(page)
+        val dh = state.displayH(page)
+        val w = ceil(dw * res).toInt().coerceIn(1, MAX_EDGE)
+        val h = ceil(dh * res).toInt().coerceIn(1, MAX_EDGE)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val r = AndroidRenderer(Canvas(bmp))
-        r.scale(w / cover.w, h / cover.h)
-        r.translate(-cover.left, -cover.top)
-        state.paintFlow?.invoke(page, r, cover)
+        r.scale(w / dw, h / dh)
+        paint(r, Rect(0.0, 0.0, dw, dh), state.footprint(page))
         return bmp
+    }
+
+    /** Flow text alone, on a transparent bitmap the size of the page's on-screen footprint. */
+    private fun renderFlowLayer(page: Page, res: Double): Bitmap = pageBitmap(page, res) { r, _, cover ->
+        state.applyPageTransform(r, page)
+        state.paintFlow?.invoke(page, r, cover)
     }
 
     /** Snapshot of what GL holds and drew, for the bench's smoke test. */
@@ -361,30 +389,29 @@ class GlInkHost(
     }
 
     private fun renderTextBox(item: TextItem, res: Double): Bitmap {
+        val rot = (state.rotationDeg / 90) and 3
         val b = item.bounds()
-        val w = ceil(b.w * res).toInt().coerceIn(1, MAX_EDGE)
-        val h = ceil(b.h * res).toInt().coerceIn(1, MAX_EDGE)
+        // Drawn already turned, so the quad over its rotated bounds needs no turn of its own.
+        val bc = b.rotatedQuarter(rot)
+        val w = ceil(bc.w * res).toInt().coerceIn(1, MAX_EDGE)
+        val h = ceil(bc.h * res).toInt().coerceIn(1, MAX_EDGE)
         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val r = AndroidRenderer(Canvas(bmp))
-        r.scale(w / b.w.coerceAtLeast(1e-6), h / b.h.coerceAtLeast(1e-6))
-        r.translate(-b.x, -b.y)
+        r.scale(w / bc.w.coerceAtLeast(1e-6), h / bc.h.coerceAtLeast(1e-6))
+        r.translate(-bc.x, -bc.y)
+        if (rot != 0) r.rotate(90.0 * rot)
         item.paint(r)
         return bmp
     }
 
-    /** Paper, border, PDF/ruling and flow text for [page] at [res]: everything static under the ink. */
-    private fun renderUnderlay(page: Page, res: Double): Bitmap {
-        val cover = state.footprint(page)
-        val w = ceil(cover.w * res).toInt().coerceIn(1, MAX_EDGE)
-        val h = ceil(cover.h * res).toInt().coerceIn(1, MAX_EDGE)
-        val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val r = AndroidRenderer(Canvas(bmp))
-        r.scale(w / cover.w, h / cover.h)
-        r.translate(-cover.left, -cover.top)
+    /** Paper, border and PDF/ruling for [page] at [res], as the page shows on screen: everything static under the ink. */
+    private fun renderUnderlay(page: Page, res: Double): Bitmap = pageBitmap(page, res) { r, display, cover ->
+        r.save()
+        state.applyPageTransform(r, page)
         r.fillRect(cover, state.paperColor(page))
         if (state.hasPageBackground(page)) state.paintPageBackground?.invoke(page, r, res, cover)
-        if (state.pageBorders) r.strokeRect(cover, Pen(state.palette.paperBorder, 1.0, cosmetic = true))
-        return bmp
+        r.restore()
+        if (state.pageBorders) r.strokeRect(display, Pen(state.palette.paperBorder, 1.0, cosmetic = true))
     }
 
     companion object {

@@ -91,7 +91,6 @@ class BenchActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        com.xnotes.ui.EditorDefaults.glDefault = false // baselines measure the Skia path; the GL smoke test turns GL on itself
         installCrashCapture()
         @Suppress("DEPRECATION")
         refreshMs = 1000.0 / windowManager.defaultDisplay.refreshRate.toDouble().coerceAtLeast(30.0)
@@ -114,7 +113,7 @@ class BenchActivity : ComponentActivity() {
         button("Run heap") { startHeap() }
         button("Check my notes") { pickNotes.launch(null) }
         button("GL paged smoke test") { startGlSmoke() }
-        button("GL checklist (vs Skia)") { startGlChecklist() }
+        button("GL checklist") { startGlChecklist() }
         button("Copy report") { copyReport() }
         button("Save JSON") { saveJson() }
         panel.addView(row)
@@ -1019,8 +1018,7 @@ class BenchActivity : ComponentActivity() {
         st.relayout()
         st.fitWidth()
         awaitFrame()
-        val host = ed.setGlInk(true)
-        if (host == null) { row("GL ink on", false, "host not created"); return }
+        val host = ed.glInkHost
         suspend fun settle() { delay(900); awaitFrame() }
         settle()
         settle()
@@ -1105,18 +1103,6 @@ class BenchActivity : ComponentActivity() {
         settle()
         row("page deleted", st.document.pages.size == pages0 && c().vectors > 0, c().toString())
 
-        // 7. off and on again
-        st.scrollY = 0.0; st.clampScroll(); st.fitWidth()
-        ed.setGlInk(false)
-        awaitFrame()
-        row("GL off", st.glBridge == null && !ed.view.glMode, "")
-        val host2 = ed.setGlInk(true)
-        settle()
-        settle()
-        val back = host2?.counts()
-        row("GL on again", back != null && back.vectors > 0 && back.texts > 0, back?.toString() ?: "no host")
-
-        ed.setGlInk(false)
         st.document = Document.blank()
         st.invalidateAllCaches()
         st.relayout()
@@ -1142,12 +1128,12 @@ class BenchActivity : ComponentActivity() {
     }
 
     /**
-     * GL paged notes checked against the Skia path: after each operation the GL surface and the Skia
-     * rendering of the same model are captured and compared, so ghost ink, missing items or a wrong
-     * blend show up as a number. The first comparison sets the baseline (antialiasing differs a little).
+     * GL paged notes checked on their own: after each operation the GL surface is captured and the
+     * share of pixels that are not paper is compared with what the operation should have done to it.
+     * Ghost ink shows up as too much, a lost item as too little; the counts say what GL holds.
      */
     private suspend fun glChecklist() {
-        line("--- GL checklist (GL vs Skia) ---")
+        line("--- GL checklist ---")
         results.put("device", "${Build.MANUFACTURER} ${Build.MODEL}")
         val rows = JSONArray()
         results.put("gl_checklist", rows)
@@ -1165,14 +1151,13 @@ class BenchActivity : ComponentActivity() {
         st.relayout()
         st.fitWidth()
         awaitFrame()
-        var host = ed.setGlInk(true)
-        if (host == null) { row("GL ink on", false, "host not created"); return }
+        val host = ed.glInkHost
         suspend fun settle() { delay(900); awaitFrame() }
         settle(); settle()
         val page = st.document.pages[0]
 
         suspend fun snapGl(): Bitmap? {
-            val v = ed.glInkHost?.glView ?: return null
+            val v = host.glView
             if (v.width <= 0 || v.height <= 0) return null
             val bmp = Bitmap.createBitmap(v.width, v.height, Bitmap.Config.ARGB_8888)
             return kotlin.coroutines.suspendCoroutine { cont ->
@@ -1181,53 +1166,37 @@ class BenchActivity : ComponentActivity() {
                 }, android.os.Handler(android.os.Looper.getMainLooper()))
             }
         }
-        /**
-         * Pixels that really differ, in tenths of a percent of those sampled (a channel gap over 30).
-         * A whole-screen average hid small mistakes, such as a highlighter blended wrongly, so this
-         * counts the mismatched pixels instead.
-         */
-        fun meanDiff(a: Bitmap, b: Bitmap): Double {
-            val w = minOf(a.width, b.width)
-            val h = minOf(a.height, b.height)
-            var bad = 0L
+        /** Pixels that are neither the page's paper nor the desk, in tenths of a percent of those sampled; -1 if the capture failed. */
+        suspend fun inkShare(): Double {
+            settle()
+            val bmp = snapGl() ?: return -1.0
+            val paper = st.paperColor(page).toArgb()
+            val desk = st.palette.bg.toArgb()
+            fun close(p: Int, q: Int) =
+                Math.abs(Color.red(p) - Color.red(q)) + Math.abs(Color.green(p) - Color.green(q)) + Math.abs(Color.blue(p) - Color.blue(q)) < 60
+            var ink = 0L
             var n = 0L
             var y = 0
-            while (y < h) {
+            while (y < bmp.height) {
                 var x = 0
-                while (x < w) {
-                    val p = a.getPixel(x, y)
-                    val q = b.getPixel(x, y)
-                    val d = (Math.abs(Color.red(p) - Color.red(q)) + Math.abs(Color.green(p) - Color.green(q)) + Math.abs(Color.blue(p) - Color.blue(q))) / 3
-                    if (d > 30) bad++
+                while (x < bmp.width) {
+                    val p = bmp.getPixel(x, y)
+                    if (!close(p, paper) && !close(p, desk)) ink++
                     n++
                     x += 2
                 }
                 y += 2
             }
-            return if (n == 0L) 0.0 else bad * 1000.0 / n
-        }
-        /** Mean pixel difference between what GL shows now and the Skia rendering of the same model; -1 when a capture fails. */
-        suspend fun diffVsSkia(): Double {
-            settle()
-            val gl = snapGl() ?: return -1.0
-            ed.setGlInk(false)
-            settle(); settle()
-            val sk = Bitmap.createBitmap(ed.view.width, ed.view.height, Bitmap.Config.ARGB_8888)
-            ed.view.draw(Canvas(sk))
-            host = ed.setGlInk(true)
-            settle(); settle()
-            val d = meanDiff(gl, sk)
-            gl.recycle(); sk.recycle()
-            return d
+            bmp.recycle()
+            return if (n == 0L) 0.0 else ink * 1000.0 / n
         }
         fun fmt(d: Double) = String.format(java.util.Locale.US, "%.2f", d)
+        fun near(a: Double, b: Double, tol: Double) = a >= 0 && b > 0 && a / b in (1.0 - tol)..(1.0 + tol)
 
-        val base = diffVsSkia()
-        row("baseline: GL matches Skia", base in 0.0..6.0, "mismatched pixels ${fmt(base)} per 1000")
-        val limit = maxOf(base, 0.0) * 1.5 + 0.4
-        fun within(step: String, d: Double) = row(step, d in 0.0..limit, "mismatched ${fmt(d)} per 1000 (limit ${fmt(limit)})")
+        val base = inkShare()
+        row("GL draws the note", base > 1.0, "ink ${fmt(base)} per 1000 pixels; ${host.counts()}")
 
-        // 1. highlighter over a pen line and over paper: must multiply like Skia
+        // 1. highlighter
         fun hl(tool: Tool, y: Double, x0: Double, x1: Double): Stroke {
             val s = ArrayList<com.xnotes.core.stroke.Sample>()
             var x = x0
@@ -1238,43 +1207,33 @@ class BenchActivity : ComponentActivity() {
             page.items.add(s)
             st.appendToCache(page, s)
         }
-        within("highlighter blends like Skia", diffVsSkia())
+        val withMarks = inkShare()
+        row("highlighter and pen line added", withMarks > base, "ink ${fmt(base)} -> ${fmt(withMarks)}")
 
-        // 2. select all: everything leaves GL (the overlay draws it); move it; unselect: it returns once, at the new place
+        // 2. select all: GL lets go of lifted items; move; unselect
         ed.controller.selectAll()
         settle()
-        val lifted = host!!.counts()
+        val lifted = host.counts()
         row("select all: GL lets go of lifted items", lifted.vectors == 0 && lifted.images == 0, lifted.toString())
         for (p in st.document.pages) for (it in p.items) it.translate(25.0, 15.0)
         ed.controller.clearSelection()
         settle()
-        row("unselect: items back in GL", host!!.counts().vectors > 0, host!!.counts().toString())
-        within("move: no ghost or lost ink", diffVsSkia())
+        val moved = inkShare()
+        row("move: no ghost or lost ink", near(moved, withMarks, 0.12), "ink ${fmt(withMarks)} -> ${fmt(moved)}")
 
         // 3. eraser, whole-stroke mode
-        fun centreOfFirstPen(): Pt? {
-            val s = page.items.firstOrNull { it is Stroke && it.tool == Tool.PEN } ?: return null
-            val m = (s as Stroke).sampleAt(s.samples.size / 2)
+        fun midOfFirstPen(): Pt? {
+            val s = page.items.firstOrNull { it is Stroke && it.tool == Tool.PEN } as? Stroke ?: return null
+            val m = s.sampleAt(s.samples.size / 2)
             return Pt(m.x, m.y)
         }
         val n0 = page.items.size
-        val c1 = centreOfFirstPen()
+        val c1 = midOfFirstPen()
         val hit1 = c1 != null && ed.controller.debugErase(0, c1.x, c1.y, 40.0)
-        settle()
-        row("eraser (stroke): removed something", hit1 && page.items.size < n0, "items $n0 -> ${page.items.size}")
-        within("eraser (stroke): GL matches", diffVsSkia())
+        val afterErase = inkShare()
+        row("eraser (stroke): removes the stroke from GL", hit1 && page.items.size < n0 && afterErase < moved, "items $n0 -> ${page.items.size}, ink ${fmt(moved)} -> ${fmt(afterErase)}")
 
-        // 4. eraser, partial mode
-        ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.AREA))
-        val c2 = centreOfFirstPen()
-        val before2 = page.items.toList()
-        val hit2 = c2 != null && ed.controller.debugErase(0, c2.x, c2.y, 30.0)
-        settle()
-        row("eraser (area): changed something", hit2 && page.items.toList() != before2, "items ${before2.size} -> ${page.items.size}")
-        within("eraser (area): GL matches", diffVsSkia())
-        ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.STROKE))
-
-        // 4b. eraser, partial mode, as a drag: many touches along one stroke, like a real sweep
+        // 4. eraser, partial mode, as a drag
         ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.AREA))
         val victim = page.items.firstOrNull { it is Stroke && it.tool == Tool.PEN } as? Stroke
         if (victim != null) {
@@ -1284,41 +1243,42 @@ class BenchActivity : ComponentActivity() {
                 ed.controller.debugErase(0, pts[i].x, pts[i].y, 14.0)
                 i += 9
             }
-            settle()
+            val afterArea = inkShare()
             val tiny = page.items.count { it is Stroke && it.samples.size <= 2 }
-            row("eraser (area) drag: tiny leftover fragments", true, "$tiny fragments of 1-2 samples left in the model (drawn as dots by both renderers)")
-            within("eraser (area) drag: GL matches", diffVsSkia())
+            row("eraser (area) drag: GL follows", afterArea < afterErase, "ink ${fmt(afterErase)} -> ${fmt(afterArea)}; $tiny fragments of 1-2 samples left")
         } else {
             row("eraser (area) drag", false, "no pen stroke to sweep")
         }
         ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.STROKE))
-        ed.undo(); ed.undo()
-        settle()
 
-        // 5. undo both erases
-        ed.undo(); ed.undo()
-        settle()
-        within("undo erases: GL matches", diffVsSkia())
+        // 5. undo everything the erasers did
+        var guard = 0
+        while (ed.canUndo && guard++ < 200 && page.items.size < n0) ed.undo()
+        val restored = inkShare()
+        row("undo: erased ink returns", near(restored, moved, 0.12), "ink ${fmt(afterErase)} -> ${fmt(restored)} (was ${fmt(moved)})")
 
         // 6. SVG image
         val svg = """<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="#d00"/><circle cx="100" cy="100" r="60" fill="#00d"/></svg>"""
         val nImg = page.items.size
+        val before = host.counts()
         ed.insertImageAt(svg.toByteArray(), st.fromPageSpace(0, Pt(150.0, 300.0)))
-        settle()
-        row("svg: inserted", page.items.size == nImg + 1, "items $nImg -> ${page.items.size}")
-        within("svg: GL matches", diffVsSkia())
+        settle(); settle()
+        val withSvg = inkShare()
+        row("svg: inserted and drawn", page.items.size == nImg + 1 && host.counts().images > before.images && withSvg > restored, "ink ${fmt(restored)} -> ${fmt(withSvg)}; ${host.counts()}")
 
-        // 7. rotation: GL stands aside for Skia and comes back
-        runCatching { ed.updateViewOverrides(com.xnotes.canvas.ViewOverrides(rotation = 90)) }.onFailure { row("rotate", false, it.toString()) }
-        settle()
-        row("rotated: GL stands aside", ed.glInkHost == null && !ed.view.glMode, "")
+        // 7. rotation: GL keeps drawing, turned, and comes back unchanged
+        val upright = withSvg
+        for (deg in listOf(90, 180, 270)) {
+            runCatching { ed.updateViewOverrides(com.xnotes.canvas.ViewOverrides(rotation = deg)) }.onFailure { row("rotate $deg", false, it.toString()) }
+            settle(); settle()
+            val turned = inkShare()
+            row("rotated $deg: GL still draws the note", turned > upright * 0.5 && host.counts().vectors > 0, "ink ${fmt(turned)} (upright ${fmt(upright)}); ${host.counts()}")
+        }
         runCatching { ed.updateViewOverrides(com.xnotes.canvas.ViewOverrides(rotation = 0)) }
         settle(); settle()
-        row("upright again: GL back", ed.glInkHost != null && ed.view.glMode, "")
-        host = ed.glInkHost
-        within("after rotation round trip: GL matches", diffVsSkia())
+        val back = inkShare()
+        row("upright again: same as before", near(back, upright, 0.15), "ink ${fmt(upright)} -> ${fmt(back)}")
 
-        ed.setGlInk(false)
         st.document = Document.blank()
         st.invalidateAllCaches()
         st.relayout()
