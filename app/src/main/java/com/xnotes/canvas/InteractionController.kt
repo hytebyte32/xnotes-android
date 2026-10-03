@@ -6,6 +6,8 @@ import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.MotionEvent
 import com.xnotes.core.edit.EraseTool
+import com.xnotes.core.edit.ShapeTool
+import com.xnotes.core.edit.StrokeTool
 import com.xnotes.core.edit.EraserPolicy
 import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Geometry
@@ -314,7 +316,8 @@ class InteractionController(
 
     // SHAPE
     var shapeConfig: ShapeConfig = ShapeConfig()
-    private var pendingShape: ShapeItem? = null
+    private val shapeTool = ShapeTool()
+    private val pendingShape: ShapeItem? get() = shapeTool.pending
     private var shapePageIndex: Int? = null
 
     // RESIZE
@@ -817,7 +820,7 @@ class InteractionController(
             // endpoint just tracks the pointer (decimation/spacing gates don't apply). Near an axis
             // it snaps flat like a dragged line.
             val start = stroke.samples.firstOrNull()
-            val end = if (start != null) snapAxisEndpoint(Pt(start.x, start.y), local) else local
+            val end = if (start != null) ShapeTool.snapAxisEndpoint(Pt(start.x, start.y), local) else local
             stroke.setStraightEnd(Sample(end.x, end.y, pressure.coerceIn(0.0, 1.0), (timeMs - strokeStartTimeMs).toDouble()))
             return
         }
@@ -826,7 +829,7 @@ class InteractionController(
         // viewport px (content px ÷ zoom), capped so it never coarsens past the old 1-content-px
         // floor when zoomed out. A fixed content-px gate discarded ever-finer detail the more you
         // zoomed in, so strokes drawn while zoomed faceted into ~zoom-px chords.
-        val gate = (MIN_SAMPLE_DIST / state.zoom).coerceAtMost(MIN_SAMPLE_DIST)
+        val gate = StrokeTool.captureGate(state.zoom)
         if (force || last == null || Pt(last.x, last.y).manhattanTo(local) >= gate) {
             stroke.addSample(Sample(local.x, local.y, pressure.coerceIn(0.0, 1.0), (timeMs - strokeStartTimeMs).toDouble()))
         }
@@ -905,7 +908,7 @@ class InteractionController(
 
     /** Add a finished stroke to its page and its cache; returns the command that undoes it. */
     private fun fileStroke(stroke: Stroke, pageIndex: Int): Command {
-        simplifyForCommit(stroke)
+        StrokeTool.simplifyForCommit(stroke, state.zoom)
         val page = state.document.pages[pageIndex]
         page.items.add(stroke)
         // The front buffer is still showing this stroke, and drawing it here as well would put two
@@ -963,26 +966,6 @@ class InteractionController(
         requestRender()
     }
 
-    /** Pen-up sample reduction: like the capture gate, the tolerance is screen-space — viewport
-     *  px at the draw zoom (÷ zoom → content px), capped so zoomed-out ink keeps content fidelity.
-     *  The stroke's just-built geometry supplies the half-width channel, so pressure/speed width
-     *  variation survives the reduction. */
-    private fun simplifyForCommit(stroke: Stroke) {
-        if (StrokeSimplify.enabled && !stroke.straight) {
-            val eps = (SIMPLIFY_EPS / state.zoom).coerceAtMost(SIMPLIFY_EPS)
-            val slim = StrokeSimplify.simplify(
-                stroke.samples, stroke.geometry().halfWidths, eps,
-                stroke.smoothScale, stroke.config.directionStrength,
-            )
-            if (slim.size != stroke.sampleCount) {
-                stroke.setSamples(slim) // allocates exactly, so no trim needed
-                stroke.invalidate()
-                return
-            }
-        }
-        // Nothing was dropped, so the stroke still carries the slack capture doubling left behind.
-        stroke.trimToSize()
-    }
 
     private fun armDwell() {
         cancelDwell()
@@ -1002,49 +985,14 @@ class InteractionController(
         if (!dwellEligible) return
         val stroke = liveStroke ?: return
         val pi = strokePageIndex ?: return
-        if (stroke.samples.size < SHAPE_MIN_SAMPLES) return // not enough yet; the next move re-arms
-        val rec = ShapeRecognizer.recognize(stroke.samples) ?: return // not a shape; the next move re-arms
-        commitRecognizedShape(stroke, pi, rec)
+        // Too short or not a confident match: the next move re-arms.
+        val shape = StrokeTool.snapToShape(stroke) ?: return
+        commitRecognizedShape(stroke, pi, shape)
     }
 
-    /** A snapped highlighter stroke keeps its look: translucent, multiplied (or screened), outline only. */
-    private fun applyHighlighter(shape: ShapeItem, stroke: Stroke) {
-        if (stroke.tool != Tool.HIGHLIGHTER) return
-        shape.highlighterAlpha = stroke.config.highlighterAlpha
-        shape.highlighterInverse = stroke.config.highlighterInverse
-        shape.neon = false
-        shape.dashed = false
-    }
-
-    /** Replace the (uncommitted) live stroke with a recognized [ShapeItem], as one undoable add. */
-    private fun commitRecognizedShape(stroke: Stroke, pageIndex: Int, rec: RecognizedShape) {
+    /** Replace the (uncommitted) live stroke with the recognized [shape], as one undoable add. */
+    private fun commitRecognizedShape(stroke: Stroke, pageIndex: Int, shape: ShapeItem) {
         val page = state.document.pages.getOrNull(pageIndex) ?: return
-        val strokeWidth = stroke.config.baseWidth * SHAPE_PEN_PARITY
-        val color = stroke.config.rgba // the as-drawn ink colour (not renderColor's alpha-scaled one)
-        val dashed = stroke.tool == Tool.DASHED // a dashed pen snaps to a dashed shape
-        val verts = rec.vertices
-        val shape = if (verts != null) {
-            // Polygon/polyline: keep the recognized corners (neon/dash carried like the other kinds).
-            ShapeItem.poly(
-                rec.kind, verts, color, strokeWidth, null, stroke.config.neon, stroke.config.neonStrength,
-                dashed, stroke.config.dashLength, stroke.config.dashGap,
-            )
-        } else {
-            ShapeItem(
-                shape = rec.kind,
-                start = rec.start,
-                end = rec.end,
-                strokeRgba = color,
-                strokeWidth = strokeWidth,
-                fillRgba = null,
-                neon = stroke.config.neon, // a neon pen snaps to a neon shape
-                neonStrength = stroke.config.neonStrength,
-                dashed = dashed,
-                dashLength = stroke.config.dashLength,
-                dashGap = stroke.config.dashGap,
-            )
-        }
-        applyHighlighter(shape, stroke)
         page.items.add(shape)
         state.appendToCache(page, shape)
         history.push(AddItem(page, shape))
@@ -1719,52 +1667,23 @@ class InteractionController(
         // Off-selection press with the shape tool: dismiss first (a tap makes no shape; endShape's
         // min-drag gate drops it), so dragging out a new shape also clears the old selection.
         clearSelection()
-        val startLocal = state.toPageSpace(pageIndex, content)
-        val kind = shapeConfig.shape
-        val fill = if (shapeConfig.fill && kind.isClosed) inkColor.scaleAlpha(shapeConfig.fillAlpha) else null
-        pendingShape = ShapeItem(
-            kind, startLocal, startLocal, inkColor, shapeConfig.strokeWidth * SHAPE_PEN_PARITY, fill,
-            shapeConfig.neon, shapeConfig.neonStrength,
-            dashed = shapeConfig.dashed, dashLength = shapeConfig.dashLength, dashGap = shapeConfig.dashGap,
-        )
+        shapeTool.begin(state.toPageSpace(pageIndex, content), shapeConfig, inkColor)
         shapePageIndex = pageIndex
         mode = PointerMode.SHAPE
         requestRender()
     }
 
     private fun extendShape(content: Pt) {
-        val shape = pendingShape ?: return
         val pi = shapePageIndex ?: return
         if (state.pageRects.getOrNull(pi) == null) return
-        val raw = state.toPageSpace(pi, content)
-        shape.end = when {
-            // Line/arrow: pin the dragged end flat when it lands near an axis.
-            shape.shape.isEndpointShape -> snapAxisEndpoint(shape.start, raw)
-            // Circle: keep the box square so it stays a perfect circle.
-            shape.shape == ShapeKind.CIRCLE -> squareCorner(shape.start, raw)
-            else -> raw
-        }
+        shapeTool.extend(state.toPageSpace(pi, content)) ?: return
         requestRender()
     }
 
-    /** Constrain a dragged corner [p] to a square box anchored at [anchor] (the perfect-circle shape). */
-    private fun squareCorner(anchor: Pt, p: Pt): Pt {
-        val side = max(abs(p.x - anchor.x), abs(p.y - anchor.y))
-        val sx = if (p.x >= anchor.x) 1.0 else -1.0
-        val sy = if (p.y >= anchor.y) 1.0 else -1.0
-        return Pt(anchor.x + sx * side, anchor.y + sy * side)
-    }
-
-    /** Snap a line/arrow's dragged endpoint to an exactly horizontal or vertical run from [anchor]
-     *  when it lands within [SHAPE_AXIS_SNAP_DEG] of one (mirrors the recognizer's axis snap). */
-    private fun snapAxisEndpoint(anchor: Pt, p: Pt): Pt {
-        return com.xnotes.core.geometry.AngleSnap.snapEnd(anchor, p)
-    }
-
     private fun endShape() {
-        val shape = pendingShape
         val pi = shapePageIndex
-        if (shape != null && pi != null && shape.start.distanceTo(shape.end) > SHAPE_MIN_DRAG) {
+        val shape = shapeTool.finish()
+        if (shape != null && pi != null) {
             val page = state.document.pages[pi]
             page.items.add(shape)
             state.appendToCache(page, shape)
@@ -1772,7 +1691,6 @@ class InteractionController(
             state.document.dirty = true
             onContentChanged()
         }
-        pendingShape = null
         shapePageIndex = null
         mode = PointerMode.IDLE
         requestRender()
@@ -2085,7 +2003,7 @@ class InteractionController(
         commitTextEdit()
         liveStroke = null
         strokePageIndex = null
-        pendingShape = null
+        shapeTool.cancel()
         shapePageIndex = null
         bandRect = null
         lassoPoints.clear()
@@ -2877,7 +2795,7 @@ class InteractionController(
         pushStrokeEdit(null) // a cancelled crossing still left segments on the pages behind it
         liveStroke = null
         strokePageIndex = null
-        pendingShape = null
+        shapeTool.cancel()
         shapePageIndex = null
         bandRect = null
         lassoPoints.clear()
@@ -3016,10 +2934,10 @@ class InteractionController(
     }
 
     companion object {
-        const val MIN_SAMPLE_DIST = 1.0
+        const val MIN_SAMPLE_DIST = StrokeTool.MIN_SAMPLE_DIST
 
         /** Pen-up reduction tolerance, viewport px at the draw zoom (see [simplifyForCommit]). */
-        const val SIMPLIFY_EPS = 0.2
+        const val SIMPLIFY_EPS = StrokeTool.SIMPLIFY_EPS
 
         /** Scale on the ink low-pass lengths for a stroke drawn at [zoom], captured at pen-down
          *  and carried on the stroke. Screen-space like the capture gate and the pen-up tolerance:
@@ -3062,7 +2980,7 @@ class InteractionController(
 
         /** Gap (viewport px) from the selection's top edge up to the rotate grip. */
         const val ROTATE_ARM = 28.0
-        const val SHAPE_MIN_DRAG = 3.0
+        const val SHAPE_MIN_DRAG = ShapeTool.MIN_DRAG
 
         /** Min capture size (content px, both axes) for the screenshot tool; below it a drag is a tap. */
         const val SHOT_MIN = 6.0
@@ -3083,11 +3001,11 @@ class InteractionController(
         const val SHAPE_DWELL_SLOP = 4.0
 
         /** Hold-to-snap: minimum samples before recognition is even attempted (mirrors the recognizer). */
-        const val SHAPE_MIN_SAMPLES = 8
+        const val SHAPE_MIN_SAMPLES = StrokeTool.SHAPE_MIN_SAMPLES
 
         /** Shape size -> thickness: the midpoint of the default pen's pressure width range (m=0.35..1.0),
          *  so a shape reads as thick as a same-size pen instead of as a flat full-width line. */
-        const val SHAPE_PEN_PARITY = 0.675
+        const val SHAPE_PEN_PARITY = ShapeTool.PEN_PARITY
 
         /** A line/arrow drawn with the shape tool snaps flat when within this angle (deg) of an axis.
          *  Half the recognizer's hold-to-snap angle: a live drag is steadier, so it needs less help. */
