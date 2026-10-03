@@ -1181,10 +1181,15 @@ class BenchActivity : ComponentActivity() {
                 }, android.os.Handler(android.os.Looper.getMainLooper()))
             }
         }
+        /**
+         * Pixels that really differ, in tenths of a percent of those sampled (a channel gap over 30).
+         * A whole-screen average hid small mistakes, such as a highlighter blended wrongly, so this
+         * counts the mismatched pixels instead.
+         */
         fun meanDiff(a: Bitmap, b: Bitmap): Double {
             val w = minOf(a.width, b.width)
             val h = minOf(a.height, b.height)
-            var sum = 0L
+            var bad = 0L
             var n = 0L
             var y = 0
             while (y < h) {
@@ -1192,13 +1197,14 @@ class BenchActivity : ComponentActivity() {
                 while (x < w) {
                     val p = a.getPixel(x, y)
                     val q = b.getPixel(x, y)
-                    sum += Math.abs(Color.red(p) - Color.red(q)) + Math.abs(Color.green(p) - Color.green(q)) + Math.abs(Color.blue(p) - Color.blue(q))
-                    n += 3
-                    x += 4
+                    val d = (Math.abs(Color.red(p) - Color.red(q)) + Math.abs(Color.green(p) - Color.green(q)) + Math.abs(Color.blue(p) - Color.blue(q))) / 3
+                    if (d > 30) bad++
+                    n++
+                    x += 2
                 }
-                y += 4
+                y += 2
             }
-            return if (n == 0L) 0.0 else sum.toDouble() / n
+            return if (n == 0L) 0.0 else bad * 1000.0 / n
         }
         /** Mean pixel difference between what GL shows now and the Skia rendering of the same model; -1 when a capture fails. */
         suspend fun diffVsSkia(): Double {
@@ -1217,9 +1223,9 @@ class BenchActivity : ComponentActivity() {
         fun fmt(d: Double) = String.format(java.util.Locale.US, "%.2f", d)
 
         val base = diffVsSkia()
-        row("baseline: GL matches Skia", base in 0.0..12.0, "mean diff ${fmt(base)}")
-        val limit = maxOf(base, 0.0) + 4.0
-        fun within(step: String, d: Double) = row(step, d in 0.0..limit, "mean diff ${fmt(d)} (limit ${fmt(limit)})")
+        row("baseline: GL matches Skia", base in 0.0..6.0, "mismatched pixels ${fmt(base)} per 1000")
+        val limit = maxOf(base, 0.0) * 1.5 + 0.4
+        fun within(step: String, d: Double) = row(step, d in 0.0..limit, "mismatched ${fmt(d)} per 1000 (limit ${fmt(limit)})")
 
         // 1. highlighter over a pen line and over paper: must multiply like Skia
         fun hl(tool: Tool, y: Double, x0: Double, x1: Double): Stroke {
@@ -1248,8 +1254,8 @@ class BenchActivity : ComponentActivity() {
         // 3. eraser, whole-stroke mode
         fun centreOfFirstPen(): Pt? {
             val s = page.items.firstOrNull { it is Stroke && it.tool == Tool.PEN } ?: return null
-            val b = s.bounds()
-            return Pt(b.x + b.w / 2, b.y + b.h / 2)
+            val m = (s as Stroke).sampleAt(s.samples.size / 2)
+            return Pt(m.x, m.y)
         }
         val n0 = page.items.size
         val c1 = centreOfFirstPen()

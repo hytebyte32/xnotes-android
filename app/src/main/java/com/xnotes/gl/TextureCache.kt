@@ -34,7 +34,8 @@ class TextureCache(private val budgetBytes: Long = DEFAULT_BUDGET_BYTES) {
         val bytes: Long get() = width.toLong() * height * 4
     }
 
-    private class Pending(val image: ImageData, val bitmap: Bitmap, val decodedFor: Int)
+    /** [shared]: the bitmap belongs to ImageDecoder's own cache (an SVG raster) and must never be recycled here. */
+    private class Pending(val image: ImageData, val bitmap: Bitmap, val decodedFor: Int, val shared: Boolean)
 
     private val entries = IdentityHashMap<ImageData, Entry>()
     private val ready = ConcurrentLinkedQueue<Pending>()
@@ -57,7 +58,7 @@ class TextureCache(private val budgetBytes: Long = DEFAULT_BUDGET_BYTES) {
         contextGen = gen
         entries.clear()
         decoding.clear()
-        while (true) (ready.poll() ?: break).bitmap.recycle()
+        while (true) { val p = ready.poll() ?: break; if (!p.shared) p.bitmap.recycle() }
         residentBytes = 0
     }
 
@@ -83,7 +84,7 @@ class TextureCache(private val budgetBytes: Long = DEFAULT_BUDGET_BYTES) {
             val entry = Entry(name[0], next.bitmap.width, next.bitmap.height, next.decodedFor, frame)
             entries[next.image] = entry
             residentBytes += entry.bytes
-            next.bitmap.recycle()
+            if (!next.shared) next.bitmap.recycle()
         }
     }
 
@@ -133,15 +134,16 @@ class TextureCache(private val budgetBytes: Long = DEFAULT_BUDGET_BYTES) {
         if (already != null && already >= target) return
         decoding[image] = target
         val gen = contextGen
+        val shared = ImageDecoder.isVector(image.file.path)
         decodeOn(
             Runnable {
                 val edge = target.coerceAtMost(maxEdge(image))
                 val bitmap = runCatching { ImageDecoder.decodeSampledFile(image.file.path, edge, edge) }.getOrNull()
                 if (bitmap == null || gen != contextGen) {
-                    bitmap?.recycle()
+                    if (!shared) bitmap?.recycle()
                     return@Runnable
                 }
-                ready.add(Pending(image, bitmap, target))
+                ready.add(Pending(image, bitmap, target, shared))
             },
         )
     }
