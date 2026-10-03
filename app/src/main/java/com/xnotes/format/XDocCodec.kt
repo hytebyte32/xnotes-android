@@ -69,7 +69,7 @@ class XDocCodec(imageCodec: ImageCodec, textMeasurer: TextMeasurer? = null) {
             for ((key, text) in usedTemplates(note)) {
                 zos.putDeflated("$TEMPLATE_DIR$key$TEMPLATE_EXT", text.toByteArray(Charsets.UTF_8))
             }
-            zos.putNextEntry(ZipEntry("manifest.json").apply { method = ZipEntry.DEFLATED })
+            zos.putNextEntry(ZipEntry("manifest.json").apply { method = ZipEntry.DEFLATED; time = ENTRY_TIME })
             val w = java.io.BufferedWriter(java.io.OutputStreamWriter(zos, Charsets.UTF_8), 32 * 1024)
             writeManifest(JsonWrite(w), note, assets)
             w.flush()
@@ -487,7 +487,7 @@ class XDocCodec(imageCodec: ImageCodec, textMeasurer: TextMeasurer? = null) {
     }
 
     private fun ZipOutputStream.putDeflated(name: String, data: ByteArray) {
-        val entry = ZipEntry(name).apply { method = ZipEntry.DEFLATED }
+        val entry = ZipEntry(name).apply { method = ZipEntry.DEFLATED; time = ENTRY_TIME }
         putNextEntry(entry)
         write(data)
         closeEntry()
@@ -499,6 +499,7 @@ class XDocCodec(imageCodec: ImageCodec, textMeasurer: TextMeasurer? = null) {
         val size = file.length()
         val entry = ZipEntry(name).apply {
             method = ZipEntry.STORED
+            time = ENTRY_TIME
             this.size = size
             compressedSize = size
             this.crc = AssetCrc.of(file)
@@ -516,6 +517,8 @@ class XDocCodec(imageCodec: ImageCodec, textMeasurer: TextMeasurer? = null) {
     }
 
     companion object {
+        /** A fixed zip timestamp (1980-01-01 UTC) so saving an untouched note twice gives identical bytes. */
+        private const val ENTRY_TIME = 315532800000L
         const val FORMAT = "xdoc"
         const val VERSION = 1
 
