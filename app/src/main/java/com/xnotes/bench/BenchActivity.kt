@@ -1274,6 +1274,27 @@ class BenchActivity : ComponentActivity() {
         within("eraser (area): GL matches", diffVsSkia())
         ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.STROKE))
 
+        // 4b. eraser, partial mode, as a drag: many touches along one stroke, like a real sweep
+        ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.AREA))
+        val victim = page.items.firstOrNull { it is Stroke && it.tool == Tool.PEN } as? Stroke
+        if (victim != null) {
+            val pts = victim.samples.map { Pt(it.x, it.y) }
+            var i = 0
+            while (i < pts.size) {
+                ed.controller.debugErase(0, pts[i].x, pts[i].y, 14.0)
+                i += 9
+            }
+            settle()
+            val tiny = page.items.count { it is Stroke && it.samples.size <= 2 }
+            row("eraser (area) drag: tiny leftover fragments", true, "$tiny fragments of 1-2 samples left in the model (drawn as dots by both renderers)")
+            within("eraser (area) drag: GL matches", diffVsSkia())
+        } else {
+            row("eraser (area) drag", false, "no pen stroke to sweep")
+        }
+        ed.controller.setToolConfig(Tool.ERASER, ed.controller.configFor(Tool.ERASER).copy(eraseMode = com.xnotes.core.tools.EraseMode.STROKE))
+        ed.undo(); ed.undo()
+        settle()
+
         // 5. undo both erases
         ed.undo(); ed.undo()
         settle()
