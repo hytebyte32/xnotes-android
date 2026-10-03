@@ -1071,7 +1071,6 @@ class BenchActivity : ComponentActivity() {
 
         // 4. select all, then clear: lifted items must come back to GL
         val full = c()
-        val preMove = host.counts()
         ed.controller.selectAll()
         settle()
         val lifted = c()
@@ -1083,7 +1082,6 @@ class BenchActivity : ComponentActivity() {
             "vec ${after.vectors}/${full.vectors} img ${after.images}/${full.images} txt ${after.texts}/${full.texts}")
 
         // 5. delete the selection, undo it
-        val preMove = host.counts()
         ed.controller.selectAll()
         settle()
         ed.controller.deleteSelection()
