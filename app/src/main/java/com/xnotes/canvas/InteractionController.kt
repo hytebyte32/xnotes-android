@@ -5,6 +5,8 @@ import android.os.Looper
 import android.view.Choreographer
 import android.view.KeyEvent
 import android.view.MotionEvent
+import com.xnotes.core.edit.EraseTool
+import com.xnotes.core.edit.EraserPolicy
 import com.xnotes.core.geometry.Affine
 import com.xnotes.core.geometry.Geometry
 import com.xnotes.core.geometry.Obb
@@ -285,10 +287,9 @@ class InteractionController(
     private var screenshotOrigin = Pt.ZERO
 
     // ERASE
-    private val eraseRemovals = mutableListOf<Pair<Page, CanvasItem>>()
-    /** AREA mode: each touched page's item list snapshotted on first contact this gesture, so the
-     *  whole split-and-trim drag undoes/redoes as one [ReplacePageItems] step. */
-    private val eraseSnapshots = linkedMapOf<Page, List<CanvasItem>>()
+    /** The paged note as the surface the shared tools work on, and the eraser drag running on it. */
+    private val surface = PagedEditSurface(state)
+    private val eraser = EraseTool(surface, EraserPolicy.PAGED)
     private var eraserCursor: Pt? = null // viewport pixels
     /** Tool armed just before the eraser was selected, for the "switch back after erasing" option. */
     private var toolBeforeEraser: Tool? = null
@@ -1074,39 +1075,14 @@ class InteractionController(
     private fun areaErase(): Boolean = configFor(Tool.ERASER).eraseMode == EraseMode.AREA
 
     private fun beginErase(vx: Double, vy: Double) {
-        eraseRemovals.clear()
-        eraseSnapshots.clear()
+        eraser.begin()
         mode = PointerMode.ERASE
         eraseAt(vx, vy)
     }
 
     private fun eraseAt(vx: Double, vy: Double) {
         eraserCursor = Pt(vx, vy)
-        val content = state.viewportToContent(Pt(vx, vy))
-        val radius = eraserRadius()
-        val eraserBox = Rect(content.x - radius, content.y - radius, radius * 2, radius * 2)
-        val area = areaErase()
-        var changed = false
-        val drawable = state.drawablePageRange()
-        for (pi in state.document.pages.indices) {
-            if (pi !in drawable) continue // a hidden paginated neighbour can't be erased
-            val pr = state.pageRects.getOrNull(pi) ?: continue
-            if (!pr.intersects(eraserBox)) continue // skip pages the eraser isn't over
-            val page = state.document.pages[pi]
-            val local = state.toPageSpace(pi, content)
-            val cx = local.x
-            val cy = local.y
-            val dirty = if (area) eraseAreaFromPage(page, cx, cy, radius)
-            else eraseStrokesFromPage(page, cx, cy, radius)
-            if (dirty != null) {
-                // Repaint only the erased area in place; fall back to a full
-                // rebuild only when the page has no live cache yet.
-                val rect = dirty.outset(REPAIR_PAD)
-                if (!state.repairRegion(page, rect)) state.invalidatePage(page)
-                changed = true
-            }
-        }
-        if (changed) onContentChanged()
+        if (eraser.eraseAt(Pt(vx, vy), eraserRadius(), areaErase())) onContentChanged()
         requestRender()
     }
 
@@ -1115,88 +1091,23 @@ class InteractionController(
      * [eraseAt] and [endErase] do it for a real drag. Returns whether anything was erased.
      */
     fun debugErase(pageIndex: Int, cx: Double, cy: Double, radius: Double): Boolean {
-        val page = state.document.pages.getOrNull(pageIndex) ?: return false
-        val dirty = if (areaErase()) eraseAreaFromPage(page, cx, cy, radius) else eraseStrokesFromPage(page, cx, cy, radius)
-        if (dirty != null) {
-            if (!state.repairRegion(page, dirty.outset(REPAIR_PAD))) state.invalidatePage(page)
-            onContentChanged()
-        }
+        val section = surface.section(pageIndex) ?: return false
+        eraser.begin()
+        val changed = eraser.eraseIn(section, Pt(cx, cy), radius, areaErase())
+        if (changed) onContentChanged()
         endErase()
-        return dirty != null
-    }
-
-    /** STROKE mode: remove every stroke/shape the eraser circle touches.  Images are deliberately placed and protected
-     *  (delete those via select + delete); text boxes erase whole like ink. Returns the repaint
-     *  region, or null if nothing changed. */
-    private fun eraseStrokesFromPage(page: Page, cx: Double, cy: Double, radius: Double): Rect? {
-        val toRemove = page.items.filter {
-            !it.locked && it !is ImageItem && it.intersectsCircle(cx, cy, radius)
-        }
-        if (toRemove.isEmpty()) return null
-        var dirty: Rect? = null
-        for (item in toRemove) {
-            page.items.remove(item)
-            eraseRemovals.add(page to item)
-            val b = item.paintBounds()
-            dirty = dirty?.union(b) ?: b
-        }
-        return dirty
-    }
-
-    /** AREA mode: replace each touched stroke or shape with the fragments that survive the eraser
-     *  circle, spliced in at the original's z-position. Images are left untouched; a touched text box is removed whole. Returns the repaint
-     *  region, or null if nothing changed. */
-    private fun eraseAreaFromPage(page: Page, cx: Double, cy: Double, radius: Double): Rect? {
-        var dirty: Rect? = null
-        var i = 0
-        while (i < page.items.size) {
-            val item = page.items[i]
-            val frags: List<CanvasItem>? = if (item.locked) {
-                null
-            } else {
-                when (item) {
-                    is Stroke -> item.erasedBy(cx, cy, radius)
-                    is ShapeItem -> item.erasedBy(cx, cy, radius)
-                    // Whole-item removal (no fragments); the page snapshot below makes it one undo step.
-                    is TextItem -> if (item.intersectsCircle(cx, cy, radius)) emptyList() else null
-                    else -> null
-                }
-            }
-            if (frags == null) {
-                i++
-                continue
-            }
-            // Snapshot the page's items on first contact this gesture, before mutating it.
-            if (!eraseSnapshots.containsKey(page)) eraseSnapshots[page] = page.items.toList()
-            val b = item.paintBounds()
-            dirty = dirty?.union(b) ?: b
-            page.items.removeAt(i)
-            page.items.addAll(i, frags)
-            i += frags.size // step past the freshly-inserted fragments
-        }
-        return dirty
+        return changed
     }
 
     private fun endErase() {
-        if (areaErase()) {
-            // One drag may split/trim many strokes across pages; commit each touched page's
-            // net before/after as one undo step.
-            val cmds = eraseSnapshots.mapNotNull { (page, before) ->
-                val after = page.items.toList()
-                if (after != before) ReplacePageItems(page, before, after) else null
-            }
-            if (cmds.isNotEmpty()) {
-                history.push(if (cmds.size == 1) cmds[0] else CompositeCommand(cmds))
-                state.document.dirty = true
-                onContentChanged()
-            }
-        } else if (eraseRemovals.isNotEmpty()) {
-            history.push(EraseItems(eraseRemovals.toList()))
+        // One drag may cut many strokes across pages; it is one undo step.
+        val command = eraser.buildCommand(areaErase())
+        if (command != null) {
+            history.push(command)
             state.document.dirty = true
             onContentChanged()
         }
-        eraseRemovals.clear()
-        eraseSnapshots.clear()
+        eraser.begin()
         eraserCursor = null
         mode = PointerMode.IDLE
         requestRender()
@@ -3140,7 +3051,7 @@ class InteractionController(
 
         /** Padding (content px) added around erased items' bounds when repairing
          *  the cache, to cover stroke anti-aliasing at the dirty-rect edge. */
-        const val REPAIR_PAD = 2.0
+        const val REPAIR_PAD = PagedEditSurface.REPAIR_PAD
 
         /** Drawn side length (viewport px) of a resize-handle square. */
         const val HANDLE_SIZE = 16.0
