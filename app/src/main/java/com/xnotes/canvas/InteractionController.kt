@@ -1110,6 +1110,21 @@ class InteractionController(
         requestRender()
     }
 
+    /**
+     * Bench only: one eraser touch at page-space ([cx], [cy]) on page [pageIndex], then lift, the way
+     * [eraseAt] and [endErase] do it for a real drag. Returns whether anything was erased.
+     */
+    fun debugErase(pageIndex: Int, cx: Double, cy: Double, radius: Double): Boolean {
+        val page = state.document.pages.getOrNull(pageIndex) ?: return false
+        val dirty = if (areaErase()) eraseAreaFromPage(page, cx, cy, radius) else eraseStrokesFromPage(page, cx, cy, radius)
+        if (dirty != null) {
+            if (!state.repairRegion(page, dirty.outset(REPAIR_PAD))) state.invalidatePage(page)
+            onContentChanged()
+        }
+        endErase()
+        return dirty != null
+    }
+
     /** STROKE mode: remove every stroke/shape the eraser circle touches.  Images are deliberately placed and protected
      *  (delete those via select + delete); text boxes erase whole like ink. Returns the repaint
      *  region, or null if nothing changed. */

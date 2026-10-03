@@ -4098,7 +4098,7 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
     private var glWanted = EditorDefaults.glDefault
 
     init {
-        if (glWanted && state.rotationDeg == 0) setGlInk(true)
+        if (glWanted && state.rotationDeg == 0) applyGl(true)
     }
 
     /** The GL ink host while GL ink is on, for the bench. */
@@ -4106,6 +4106,12 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
 
     /** Turn GL ink on or off; returns the host when on, or null (off, or refused for a rotated view). */
     fun setGlInk(on: Boolean): com.xnotes.canvas.GlInkHost? {
+        glWanted = on
+        return applyGl(on)
+    }
+
+    /** Switch the GL host without changing whether GL is wanted (a rotated view only pauses it). */
+    private fun applyGl(on: Boolean): com.xnotes.canvas.GlInkHost? {
         if ((glInk != null) == on) return glInk
         if (on && state.rotationDeg != 0) return null
         if (on) {
@@ -4142,8 +4148,8 @@ class Editor(context: Context, val pane: Pane = Pane.PRIMARY) : ToolPopupHost, S
             val cur = if (state.didInitialFit) state.currentPageIndex() else 0
             state.viewingMode = new.mode
             state.rotationDeg = new.rotation
-            if (new.rotation != 0 && glInk != null) setGlInk(false)
-            if (new.rotation == 0 && glInk == null && glWanted) setGlInk(true)
+            if (new.rotation != 0 && glInk != null) applyGl(false)
+            if (new.rotation == 0 && glInk == null && glWanted) applyGl(true)
             state.verticalScroll = new.verticalScroll
             state.flipOffsetX = 0.0
             if (new.verticalScroll) state.fitHeightActive = false // a paginated-only magnet
