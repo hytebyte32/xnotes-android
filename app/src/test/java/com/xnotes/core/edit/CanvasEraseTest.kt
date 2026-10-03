@@ -46,14 +46,14 @@ class CanvasEraseTest {
         val doc = docOf(hit, miss)
         val session = eraser(doc)
 
-        assertTrue(session.eraseAt(Pt(50.0, 0.0, 8.0), area = false))
+        assertTrue(session.eraseAt(Pt(50.0, 0.0), 8.0, area = false))
         assertEquals(listOf<CanvasItem>(miss), doc.items)
     }
 
     @Test fun wholeStrokeModeMissesWhatIsOutOfReach() {
         val doc = docOf(line(100.0))
         val session = eraser(doc)
-        assertFalse(session.eraseAt(Pt(50.0, 400.0, 8.0), area = false))
+        assertFalse(session.eraseAt(Pt(50.0, 400.0), 8.0, area = false))
         assertEquals(1, doc.itemCount)
         assertTrue(session.isEmpty)
     }
@@ -62,8 +62,8 @@ class CanvasEraseTest {
         val img = image(0.0, 0.0)
         val doc = docOf(img)
         val session = eraser(doc)
-        assertFalse(session.eraseAt(Pt(5.0, 5.0, 20.0), area = false))
-        assertFalse(session.eraseAt(Pt(5.0, 5.0, 20.0), area = true))
+        assertFalse(session.eraseAt(Pt(5.0, 5.0), 20.0, area = false))
+        assertFalse(session.eraseAt(Pt(5.0, 5.0), 20.0, area = true))
         assertEquals(listOf<CanvasItem>(img), doc.items)
     }
 
@@ -89,7 +89,7 @@ class CanvasEraseTest {
         val doc = docOf(stroke)
         val session = eraser(doc)
 
-        assertTrue(session.eraseAt(Pt(50.0, 0.0, 8.0), area = true))
+        assertTrue(session.eraseAt(Pt(50.0, 0.0), 8.0, area = true))
         assertEquals("a mid-stroke hole leaves two fragments", 2, doc.itemCount)
         assertTrue(doc.items.all { it is Stroke && it !== stroke })
         val left = doc.items[0] as Stroke
