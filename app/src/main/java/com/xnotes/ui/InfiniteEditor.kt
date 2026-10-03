@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import com.xnotes.canvas.InteractionController
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.geometry.Rect
+import com.xnotes.core.history.Command
 import com.xnotes.core.history.History
 import com.xnotes.core.history.LockItems
 import com.xnotes.core.history.RestyleItems
@@ -24,7 +25,8 @@ import com.xnotes.core.infinite.OnCanvas
 import com.xnotes.core.infinite.OverlayTessellator
 import com.xnotes.core.infinite.ReplaceCanvasItems
 import com.xnotes.core.infinite.StrokeTessellator
-import com.xnotes.core.infinite.EraseSession
+import com.xnotes.core.edit.EraseTool
+import com.xnotes.core.edit.EraserPolicy
 import com.xnotes.core.infinite.InfiniteDocument
 import com.xnotes.core.infinite.GlowSpec
 import com.xnotes.core.infinite.InkPass
@@ -92,7 +94,7 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
         configFor = { configFor(it) },
         onWetStroke = { publishWetStroke(it) },
         onCommitStroke = { commitStroke(it) },
-        onEraseBegin = { EraseSession(document) },
+        onEraseBegin = { EraseTool(CanvasEditSurface(document, view.viewport), EraserPolicy.CANVAS) },
         onEraseEnd = { commitErase(it) },
         onEraserCursor = { at, radius -> view.setEraserCursor(at, radius) },
         onPendingShape = { publishPendingShape(it) },
@@ -1300,8 +1302,8 @@ class InfiniteEditor(context: Context) : ToolPopupHost, SelectionMenuHost, LongP
     }
 
     /** Pen up on an eraser drag: the whole drag is one undoable edit, however much it cut. */
-    private fun commitErase(session: EraseSession) {
-        val command = session.buildCommand() ?: return
+    private fun commitErase(command: Command?) {
+        command ?: return
         history.push(command)
         markDirty()
         refresh()

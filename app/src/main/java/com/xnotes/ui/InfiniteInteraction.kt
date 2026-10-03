@@ -7,6 +7,8 @@ import android.view.KeyEvent
 import android.view.MotionEvent
 import com.xnotes.canvas.InteractionController
 import com.xnotes.canvas.StylusButtonLatch
+import com.xnotes.core.edit.ShapeTool
+import com.xnotes.core.edit.StrokeTool
 import com.xnotes.core.geometry.Pt
 import com.xnotes.core.infinite.CanvasViewport
 import com.xnotes.canvas.HandleId
@@ -14,7 +16,8 @@ import com.xnotes.canvas.ResizeMath
 import com.xnotes.canvas.SelectionMath
 import com.xnotes.core.geometry.Rect
 import com.xnotes.core.infinite.CanvasSelection
-import com.xnotes.core.infinite.EraseSession
+import com.xnotes.core.edit.EraseTool
+import com.xnotes.core.history.Command
 import com.xnotes.core.infinite.LiftTransform
 import com.xnotes.core.infinite.OverlayTessellator
 import com.xnotes.core.model.CanvasItem
@@ -65,9 +68,9 @@ class InfiniteInteraction(
     /** Pen up on a finished stroke: add it to the document and push the undo command. */
     private val onCommitStroke: (Stroke) -> Unit = {},
     /** Begin an eraser drag; the host owns the document and the undo stack. */
-    private val onEraseBegin: () -> EraseSession? = { null },
+    private val onEraseBegin: () -> EraseTool? = { null },
     /** The eraser drag ended: push its single undo command. */
-    private val onEraseEnd: (EraseSession) -> Unit = {},
+    private val onEraseEnd: (Command?) -> Unit = {},
     /** Where the eraser cursor sits in viewport pixels, and how wide, or null to hide it. */
     private val onEraserCursor: (Pt?, Double) -> Unit = { _, _ -> },
     /** The shape being dragged out, re-tessellated as it grows, or null to clear the preview. */
@@ -141,10 +144,10 @@ class InfiniteInteraction(
 
     private val stylusButtons = StylusButtonLatch()
 
-    private var eraseSession: EraseSession? = null
+    private var eraseSession: EraseTool? = null
 
     // The shape being dragged out with the shape tool.
-    private var pendingShape: ShapeItem? = null
+    private val shapeTool = ShapeTool()
 
     // Band and lasso, in content space, live only while their gesture runs.
     var bandRect: Rect? = null
@@ -579,8 +582,7 @@ class InfiniteInteraction(
         val last = stroke.samples.lastOrNull()
         // Decimate by on-screen spacing rather than content spacing, so drawing while zoomed in
         // keeps its detail instead of faceting into chords a zoom factor long.
-        val gate = (InteractionController.MIN_SAMPLE_DIST / viewport.zoom)
-            .coerceAtMost(InteractionController.MIN_SAMPLE_DIST)
+        val gate = StrokeTool.captureGate(viewport.zoom)
         if (force || last == null || Pt(last.x, last.y).manhattanTo(p) >= gate) {
             stroke.addSample(Sample(p.x, p.y, pressure.coerceIn(0.0, 1.0), t))
         }
@@ -604,7 +606,7 @@ class InfiniteInteraction(
         // buffer is deliberately not cleared here: the commit releases it in the same step, so no
         // frame can land between the two and blink.
         stroke.finished = true
-        simplifyForCommit(stroke)
+        StrokeTool.simplifyForCommit(stroke, viewport.zoom)
         onCommitStroke(stroke)
     }
 
@@ -945,62 +947,31 @@ class InfiniteInteraction(
     // --- shapes ---
 
     private fun beginShape(vx: Double, vy: Double) {
-        val cfg = shapeConfig()
         val at = viewport.viewportToContent(Pt(vx, vy))
-        val ink = inkColor()
-        val fill = if (cfg.fill && cfg.shape.isClosed) ink.scaleAlpha(cfg.fillAlpha) else null
-        pendingShape = ShapeItem(
-            cfg.shape, at, at, ink, cfg.strokeWidth * InteractionController.SHAPE_PEN_PARITY, fill,
-            cfg.neon, cfg.neonStrength,
-            dashed = cfg.dashed, dashLength = cfg.dashLength, dashGap = cfg.dashGap,
-        )
+        val shape = shapeTool.begin(at, shapeConfig(), inkColor())
         mode = CanvasPointerMode.SHAPE
         setInteractive(false, false)
-        onPendingShape(pendingShape)
+        onPendingShape(shape)
         requestRender()
     }
 
     private fun extendShape(vx: Double, vy: Double) {
-        val shape = pendingShape ?: return
-        val raw = viewport.viewportToContent(Pt(vx, vy))
-        shape.end = when {
-            // Line and arrow pin flat when the dragged end lands near an axis.
-            shape.shape.isEndpointShape -> snapAxisEndpoint(shape.start, raw)
-            // Circle keeps its box square, so it stays a circle rather than becoming an ellipse.
-            shape.shape == ShapeKind.CIRCLE -> squareCorner(shape.start, raw)
-            else -> raw
-        }
+        val shape = shapeTool.extend(viewport.viewportToContent(Pt(vx, vy))) ?: return
         onPendingShape(shape)
         requestRender()
     }
 
     private fun endShape() {
-        val shape = pendingShape
-        pendingShape = null
-        onPendingShape(null)
         // A tap makes no shape; only a real drag commits one.
-        if (shape != null && shape.start.distanceTo(shape.end) > InteractionController.SHAPE_MIN_DRAG) {
-            onCommitShape(shape)
-        }
+        val shape = shapeTool.finish()
+        onPendingShape(null)
+        if (shape != null) onCommitShape(shape)
         requestRender()
     }
 
     private fun abandonShape() {
-        pendingShape = null
+        shapeTool.cancel()
         onPendingShape(null)
-    }
-
-    /** Constrain a dragged corner to a square box anchored at [anchor], for the perfect circle. */
-    private fun squareCorner(anchor: Pt, p: Pt): Pt {
-        val side = max(abs(p.x - anchor.x), abs(p.y - anchor.y))
-        val sx = if (p.x >= anchor.x) 1.0 else -1.0
-        val sy = if (p.y >= anchor.y) 1.0 else -1.0
-        return Pt(anchor.x + sx * side, anchor.y + sy * side)
-    }
-
-    /** Pull a line or arrow's dragged end weakly onto 30, 45 and 90 degree angles from [anchor]. */
-    private fun snapAxisEndpoint(anchor: Pt, p: Pt): Pt {
-        return com.xnotes.core.geometry.AngleSnap.snapEnd(anchor, p)
     }
 
     // --- hold still to snap a freehand stroke into a shape ---
@@ -1023,38 +994,7 @@ class InfiniteInteraction(
         dwellRunnable = null
         if (!dwellEligible) return
         val stroke = liveStroke ?: return
-        if (stroke.samples.size < InteractionController.SHAPE_MIN_SAMPLES) return
-        val rec = ShapeRecognizer.recognize(stroke.samples) ?: return
-        val width = stroke.config.baseWidth * InteractionController.SHAPE_PEN_PARITY
-        val color = stroke.config.rgba // the as-drawn colour, not the alpha-scaled render one
-        val dashed = stroke.tool == Tool.DASHED // a dashed pen snaps to a dashed shape
-        val verts = rec.vertices
-        val shape = if (verts != null) {
-            ShapeItem.poly(
-                rec.kind, verts, color, width, null, stroke.config.neon, stroke.config.neonStrength,
-                dashed, stroke.config.dashLength, stroke.config.dashGap,
-            )
-        } else {
-            ShapeItem(
-                shape = rec.kind,
-                start = rec.start,
-                end = rec.end,
-                strokeRgba = color,
-                strokeWidth = width,
-                fillRgba = null,
-                neon = stroke.config.neon,
-                neonStrength = stroke.config.neonStrength,
-                dashed = dashed,
-                dashLength = stroke.config.dashLength,
-                dashGap = stroke.config.dashGap,
-            )
-        }
-        if (stroke.tool == Tool.HIGHLIGHTER) {
-            shape.highlighterAlpha = stroke.config.highlighterAlpha
-            shape.highlighterInverse = stroke.config.highlighterInverse
-            shape.neon = false
-            shape.dashed = false
-        }
+        val shape = StrokeTool.snapToShape(stroke) ?: return
         // The stroke was never committed, so dropping it makes the wet ink vanish the moment it
         // snaps; the eventual pen up then commits nothing.
         liveStroke = null
@@ -1105,7 +1045,7 @@ class InfiniteInteraction(
         val session = eraseSession ?: return
         onEraserCursor(Pt(vx, vy), eraserRadius() * viewport.zoom)
         val content = viewport.viewportToContent(Pt(vx, vy))
-        session.erase(content.x, content.y, eraserRadius(), areaErase())
+        session.eraseAt(Pt(vx, vy), eraserRadius(), areaErase())
         requestRender()
     }
 
@@ -1113,7 +1053,7 @@ class InfiniteInteraction(
         val session = eraseSession ?: return
         eraseSession = null
         onEraserCursor(null, 0.0)
-        onEraseEnd(session)
+        onEraseEnd(session.buildCommand(areaErase()))
         requestRender()
     }
 
@@ -1121,25 +1061,6 @@ class InfiniteInteraction(
     private fun abandonStroke() {
         liveStroke = null
         onWetStroke(null)
-    }
-
-    /** Shed the samples the ribbon does not need, at the tolerance the draw zoom justifies. */
-    private fun simplifyForCommit(stroke: Stroke) {
-        if (StrokeSimplify.enabled && !stroke.straight) {
-            val eps = (InteractionController.SIMPLIFY_EPS / viewport.zoom)
-                .coerceAtMost(InteractionController.SIMPLIFY_EPS)
-            val slim = StrokeSimplify.simplify(
-                stroke.samples, stroke.geometry().halfWidths, eps,
-                stroke.smoothScale, stroke.config.directionStrength,
-            )
-            if (slim.size != stroke.sampleCount) {
-                stroke.setSamples(slim) // allocates exactly, so no trim needed
-                stroke.invalidate()
-                return
-            }
-        }
-        // Nothing was dropped, so the stroke still carries the slack capture doubling left behind.
-        stroke.trimToSize()
     }
 
     private fun pressureOf(e: MotionEvent, index: Int): Double =
